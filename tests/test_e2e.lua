@@ -224,17 +224,65 @@ end
 
 T["unpack hunk"] = new_set()
 
-T["unpack hunk"]["preserves raw coordinates and exposes visible coordinates"] = function()
-  local coordinates = child.lua_func(function()
+T["unpack hunk"]["returns variant-specific ranges and boundary positions"] = function()
+  local hunks = child.lua_func(function()
     local insertion = M.unpack_hunk { 0, 0, 1, 1 }
     local deletion = M.unpack_hunk { 1, 1, 0, 0 }
+    local change = M.unpack_hunk { 1, 1, 1, 1 }
     return {
-      insertion = { insertion.start_old_1i, insertion.start_old_1i_visible },
-      deletion = { deletion.start_new_1i, deletion.start_new_1i_visible, deletion.start_new_0i },
+      insertion = {
+        kind = insertion.kind,
+        after_old_1i = insertion.after_old_1i,
+        after_old_1i_visible = insertion.after_old_1i_visible,
+        start_new_1i = insertion.start_new_1i,
+        end_new_1i_incl = insertion.end_new_1i_incl,
+        is_leading = insertion.is_leading,
+      },
+      deletion = {
+        kind = deletion.kind,
+        start_old_1i = deletion.start_old_1i,
+        end_old_1i_incl = deletion.end_old_1i_incl,
+        after_new_1i = deletion.after_new_1i,
+        after_new_1i_visible = deletion.after_new_1i_visible,
+        is_leading = deletion.is_leading,
+      },
+      change = {
+        kind = change.kind,
+        start_old_1i = change.start_old_1i,
+        start_new_1i = change.start_new_1i,
+        end_old_1i_incl = change.end_old_1i_incl,
+        end_new_1i_incl = change.end_new_1i_incl,
+        is_leading = change.is_leading,
+      },
     }
   end)
 
-  eq(coordinates, { insertion = { 0, 1 }, deletion = { 0, 1, -1 } })
+  eq(hunks, {
+    insertion = {
+      kind = "insertion",
+      after_old_1i = 0,
+      after_old_1i_visible = 1,
+      start_new_1i = 1,
+      end_new_1i_incl = 1,
+      is_leading = true,
+    },
+    deletion = {
+      kind = "deletion",
+      start_old_1i = 1,
+      end_old_1i_incl = 1,
+      after_new_1i = 0,
+      after_new_1i_visible = 1,
+      is_leading = true,
+    },
+    change = {
+      kind = "change",
+      start_old_1i = 1,
+      start_new_1i = 1,
+      end_old_1i_incl = 1,
+      end_new_1i_incl = 1,
+      is_leading = false,
+    },
+  })
 end
 
 T["hunk navigation"] = new_set()
