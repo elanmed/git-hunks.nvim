@@ -50,6 +50,7 @@ end
 
 --- @class UnpackedHunk
 --- @field start_old_1i number
+--- @field start_old_1i_visible integer
 --- @field start_old_0i number
 --- @field count_old number
 --- @field end_old_1i_excl number
@@ -74,13 +75,21 @@ M.unpack_hunk = function(hunk)
   local start_old_1i, count_old, start_new_1i, count_new = unpack(hunk)
 
   local start_old_0i = start_old_1i - 1
+  local start_new_0i = start_new_1i - 1
   local end_old_1i_excl = start_old_1i + count_old
   local end_old_1i_incl = end_old_1i_excl - 1
   local end_old_0i_excl = end_old_1i_excl - 1
   local end_old_0i_incl = end_old_1i_incl - 1
 
+  -- If `old` begins with a deleted line and new has no line there,
+  -- vim.text.diff reports start_new_1i as 0
+  local start_old_1i_visible = math.max(1, start_old_1i)
+
+  -- If `new` begins with an insertion and old has no line there,
+  -- vim.text.diff reports start_old_1i as 0
   local start_new_1i_visible = math.max(1, start_new_1i)
-  local start_new_0i = start_new_1i - 1
+
+  -- A zero count makes the inclusive end precede the start; that side is empty.
   local end_new_1i_excl = start_new_1i + count_new
   local end_new_1i_incl = end_new_1i_excl - 1
   local end_new_0i_excl = end_new_1i_excl - 1
@@ -91,6 +100,7 @@ M.unpack_hunk = function(hunk)
 
   return {
     start_old_1i = start_old_1i,
+    start_old_1i_visible = start_old_1i_visible,
     start_old_0i = start_old_0i,
     count_old = count_old,
     end_old_1i_excl = end_old_1i_excl,

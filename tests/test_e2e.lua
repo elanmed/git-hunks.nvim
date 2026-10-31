@@ -222,6 +222,21 @@ T["setup"]["creates global autocommands"] = function()
   -- TODO: verify GitHunks* autocommand groups exist.
 end
 
+T["unpack hunk"] = new_set()
+
+T["unpack hunk"]["preserves raw coordinates and exposes visible coordinates"] = function()
+  local coordinates = child.lua_func(function()
+    local insertion = M.unpack_hunk { 0, 0, 1, 1 }
+    local deletion = M.unpack_hunk { 1, 1, 0, 0 }
+    return {
+      insertion = { insertion.start_old_1i, insertion.start_old_1i_visible },
+      deletion = { deletion.start_new_1i, deletion.start_new_1i_visible, deletion.start_new_0i },
+    }
+  end)
+
+  eq(coordinates, { insertion = { 0, 1 }, deletion = { 0, 1, -1 } })
+end
+
 T["hunk navigation"] = new_set()
 
 T["hunk navigation"]["jumps to next hunk"] = function()
