@@ -81,15 +81,16 @@ M.unpack_hunk = function(hunk)
   local end_old_0i_excl = end_old_1i_excl - 1
   local end_old_0i_incl = end_old_1i_incl - 1
 
-  -- If `old` begins with a deleted line and new has no line there,
-  -- vim.text.diff reports start_new_1i as 0
+  -- If `old` starts with a line deleted in `new`, vim.text.diff reports
+  -- start_new_1i as 0.
   local start_old_1i_visible = math.max(1, start_old_1i)
 
-  -- If `new` begins with an insertion and old has no line there,
-  -- vim.text.diff reports start_old_1i as 0
+  -- If `new` starts with a line not present in `old`, vim.text.diff reports
+  -- start_old_1i as 0.
   local start_new_1i_visible = math.max(1, start_new_1i)
 
-  -- A zero count makes the inclusive end precede the start; that side is empty.
+  -- When count_new is 0, the hunk has no new-side lines; its inclusive end is
+  -- before its start, so it does not identify an actual buffer row.
   local end_new_1i_excl = start_new_1i + count_new
   local end_new_1i_incl = end_new_1i_excl - 1
   local end_new_0i_excl = end_new_1i_excl - 1
