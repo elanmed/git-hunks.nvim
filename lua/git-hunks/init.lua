@@ -139,7 +139,7 @@ end
 local generate_diff = function(opts)
   --- @return DiffHunk[]?
   return vim.async.run(function()
-    local old_str = vim.async.await(M.read_index_file(opts.rel_filename))
+    local old_str = vim.async.await(M.read_index_file(opts.rel_filename)) --[[@as string?]]
     if old_str == nil then
       return nil
     end
@@ -150,7 +150,7 @@ local generate_diff = function(opts)
     end
     local new_lines = vim.api.nvim_buf_get_lines(opts.file_bufnr, 0, -1, false)
     local new_str = table.concat(new_lines, "\n"):gsub("\n$", "") .. "\n"
-    return vim.text.diff(old_str, new_str, { result_type = "indices" })
+    return vim.text.diff(old_str, new_str, { result_type = "indices" }) --[[@as DiffHunk[]?]]
   end)
 end
 
@@ -194,7 +194,7 @@ local update_state_for_buf = function(bufnr)
       return
     end
 
-    local index_str = vim.async.await(M.read_index_file(bufname))
+    local index_str = vim.async.await(M.read_index_file(bufname)) --[[@as string?]]
     if index_str == nil then
       clear_state_for_buf(bufnr)
       return
@@ -435,12 +435,12 @@ end
 
 --- @type fun():nil
 local setup_file_watcher = cb_async(function()
-  local git_dir = vim.async.await(vim_system_stdout { "git", "rev-parse", "--absolute-git-dir" })
+  local git_dir = vim.async.await(vim_system_stdout { "git", "rev-parse", "--absolute-git-dir" }) --[[@as string?]]
   ensure_main_loop()
   if git_dir == nil then
     return
   end
-  git_dir = vim.trim(git_dir)
+  local git_dir_path = vim.trim(git_dir)
 
   local index_watch = vim.uv.new_fs_event()
   if index_watch == nil then
@@ -448,7 +448,7 @@ local setup_file_watcher = cb_async(function()
   end
 
   index_watch:start(
-    git_dir,
+    git_dir_path,
     {},
     cb_async(function(_, filename)
       ensure_main_loop()
