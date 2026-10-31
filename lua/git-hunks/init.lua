@@ -57,6 +57,7 @@ end
 --- @field end_old_0i_excl number
 --- @field end_old_0i_incl number
 --- @field start_new_1i number
+--- @field start_new_1i_visible integer
 --- @field start_new_0i number
 --- @field count_new number
 --- @field end_new_1i_excl number
@@ -78,6 +79,7 @@ M.unpack_hunk = function(hunk)
   local end_old_0i_excl = end_old_1i_excl - 1
   local end_old_0i_incl = end_old_1i_incl - 1
 
+  local start_new_1i_visible = math.max(1, start_new_1i)
   local start_new_0i = start_new_1i - 1
   local end_new_1i_excl = start_new_1i + count_new
   local end_new_1i_incl = end_new_1i_excl - 1
@@ -97,6 +99,7 @@ M.unpack_hunk = function(hunk)
     end_old_0i_incl = end_old_0i_incl,
 
     start_new_1i = start_new_1i,
+    start_new_1i_visible = start_new_1i_visible,
     start_new_0i = start_new_0i,
     count_new = count_new,
     end_new_1i_excl = end_new_1i_excl,
@@ -230,7 +233,7 @@ local update_signs = vim.schedule_wrap(function()
       return "DiffSignChange"
     end)()
 
-    for row_1i = hunk.start_new_1i, math.max(hunk.end_new_1i_incl, hunk.start_new_1i) do
+    for row_1i = hunk.start_new_1i_visible, math.max(hunk.end_new_1i_incl, hunk.start_new_1i_visible) do
       local row_0i = row_1i - 1
       if row_0i >= 0 then
         table.insert(rows_to_hl, { row_0i = row_0i, hl = hunk_hl_group })
@@ -272,13 +275,13 @@ local function navigate_hunk(direction)
   for _, raw_hunk in ipairs(indices) do
     local hunk = M.unpack_hunk(raw_hunk)
     if direction == "next" then
-      if hunk.start_new_1i > row_1i then
-        next_hunk_row_1i = hunk.start_new_1i
+      if hunk.start_new_1i_visible > row_1i then
+        next_hunk_row_1i = hunk.start_new_1i_visible
         break
       end
     else
-      if hunk.start_new_1i < row_1i then
-        next_hunk_row_1i = hunk.start_new_1i
+      if hunk.start_new_1i_visible < row_1i then
+        next_hunk_row_1i = hunk.start_new_1i_visible
         break
       end
     end
@@ -287,11 +290,11 @@ local function navigate_hunk(direction)
   if next_hunk_row_1i == nil then
     if direction == "next" then
       local hunk = M.unpack_hunk(buf_state.indices[1])
-      vim.api.nvim_win_set_cursor(0, { hunk.start_new_1i, 0 })
+      vim.api.nvim_win_set_cursor(0, { hunk.start_new_1i_visible, 0 })
       return notify(vim.log.levels.INFO, "Wrapping to the first hunk")
     else
       local hunk = M.unpack_hunk(buf_state.indices[#buf_state.indices])
-      vim.api.nvim_win_set_cursor(0, { hunk.start_new_1i, 0 })
+      vim.api.nvim_win_set_cursor(0, { hunk.start_new_1i_visible, 0 })
       return notify(vim.log.levels.INFO, "Wrapping to the last hunk")
     end
   end
@@ -312,8 +315,8 @@ local function reset_hunk(opts)
 
     local hunk_overlaps_range = false
     if hunk.is_deletion then
-      hunk_overlaps_range = hunk.start_new_1i >= opts.start_line_1i
-        and hunk.start_new_1i <= opts.end_line_1i_incl
+      hunk_overlaps_range = hunk.start_new_1i_visible >= opts.start_line_1i
+        and hunk.start_new_1i_visible <= opts.end_line_1i_incl
     else
       hunk_overlaps_range = hunk.end_new_1i_incl >= opts.start_line_1i
         and hunk.start_new_1i <= opts.end_line_1i_incl

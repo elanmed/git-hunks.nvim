@@ -281,6 +281,43 @@ line5
   expect_cursor(2)
 end
 
+T["hunk navigation"]["navigates to a leading deletion"] = function()
+  mock_read_index_file [[gone
+line1
+line2
+line3
+line4
+line5
+]]
+  set_worktree_buffer("test.txt", { "line1", "line2", "line3 changed", "line4", "line5" })
+  trigger_diff_update()
+
+  local bufnr = child.api.nvim_get_current_buf()
+  expect_hunks(bufnr)
+
+  child.api.nvim_win_set_cursor(0, { 3, 0 })
+  child.type_keys "<Plug>GitHunksPrevHunk"
+
+  expect_cursor(1)
+end
+
+T["hunk navigation"]["wraps to first leading deletion"] = function()
+  mock_read_index_file [[gone
+line1
+line2
+]]
+  set_worktree_buffer("test.txt", { "line1", "line2" })
+  trigger_diff_update()
+
+  local bufnr = child.api.nvim_get_current_buf()
+  expect_hunks(bufnr)
+
+  child.api.nvim_win_set_cursor(0, { 2, 0 })
+  child.type_keys "<Plug>GitHunksNextHunk"
+
+  expect_cursor(1)
+end
+
 T["hunk navigation"]["wraps to last hunk before first"] = function()
   mock_read_index_file [[line1
 line2
@@ -349,6 +386,19 @@ line4
   local bufnr = child.api.nvim_get_current_buf()
   expect_hunks(bufnr)
   expect_sign(bufnr, 2, "DiffSignDelete")
+end
+
+T["hunk signs"]["marks a leading deletion on the first line"] = function()
+  mock_read_index_file [[gone
+line1
+line2
+]]
+  set_worktree_buffer("test.txt", { "line1", "line2" })
+  trigger_diff_update()
+
+  local bufnr = child.api.nvim_get_current_buf()
+  expect_hunks(bufnr)
+  expect_sign(bufnr, 1, "DiffSignDelete")
 end
 
 T["hunk signs"]["adds extmarks for changed lines"] = function()
@@ -483,6 +533,23 @@ line5
   expect_lines { "line1", "line2", "line3", "line4", "line5" }
 end
 
+T["reset hunk"]["resets a leading deletion"] = function()
+  mock_read_index_file [[gone
+line1
+line2
+]]
+  set_worktree_buffer("test.txt", { "line1", "line2" })
+  trigger_diff_update()
+
+  local bufnr = child.api.nvim_get_current_buf()
+  expect_hunks(bufnr)
+
+  child.api.nvim_win_set_cursor(0, { 1, 0 })
+  child.type_keys "<Plug>GitHunksResetHunk"
+
+  expect_lines { "gone", "line1", "line2" }
+end
+
 T["reset hunk"]["does nothing when cursor is not on a hunk"] = function()
   mock_read_index_file [[line1
 line2
@@ -527,6 +594,24 @@ line5
 end
 
 T["reset file"] = new_set()
+
+T["reset file"]["resets a leading deletion"] = function()
+  mock_read_index_file [[gone
+line1
+line2
+line3
+line4
+]]
+  set_worktree_buffer("test.txt", { "line1", "line2 changed", "line3", "line4" })
+  trigger_diff_update()
+
+  local bufnr = child.api.nvim_get_current_buf()
+  expect_hunks(bufnr)
+
+  child.type_keys "<Plug>GitHunksResetFile"
+
+  expect_lines { "gone", "line1", "line2", "line3", "line4" }
+end
 
 T["reset file"]["resets the entire file"] = function()
   mock_read_index_file [[line1
