@@ -48,25 +48,39 @@ end
 -- Diff
 -- ====================
 
---- @class UnpackedHunk
---- @field start_old_1i number
---- @field start_old_1i_visible integer
---- @field start_old_0i number
---- @field count_old number
---- @field end_old_1i_excl number
---- @field end_old_1i_incl number
---- @field end_old_0i_excl number
---- @field end_old_0i_incl number
---- @field start_new_1i number
---- @field start_new_1i_visible integer
---- @field start_new_0i number
---- @field count_new number
---- @field end_new_1i_excl number
---- @field end_new_1i_incl number
---- @field end_new_0i_excl number
---- @field end_new_0i_incl number
---- @field is_deletion boolean
---- @field is_insertion boolean
+--- @class HunkOldRange
+--- @field start_old_1i integer
+--- @field start_old_0i integer
+--- @field count_old integer
+--- @field end_old_1i_excl integer
+--- @field end_old_1i_incl integer
+--- @field end_old_0i_excl integer
+--- @field end_old_0i_incl integer
+
+--- @class HunkNewRange
+--- @field start_new_1i integer
+--- @field start_new_0i integer
+--- @field count_new integer
+--- @field end_new_1i_excl integer
+--- @field end_new_1i_incl integer
+--- @field end_new_0i_excl integer
+--- @field end_new_0i_incl integer
+
+--- @class InsertionHunk : HunkNewRange
+--- @field kind "insertion"
+--- @field after_old_1i integer
+--- @field is_leading boolean
+
+--- @class DeletionHunk : HunkOldRange
+--- @field kind "deletion"
+--- @field after_new_1i integer
+--- @field after_new_1i_visible integer
+--- @field is_leading boolean
+
+--- @class ChangeHunk : HunkOldRange, HunkNewRange
+--- @field kind "change"
+
+--- @alias UnpackedHunk InsertionHunk | DeletionHunk | ChangeHunk
 
 --- @alias DiffHunk { [1]: integer, [2]: integer, [3]: integer, [4]: integer }
 --- @param hunk DiffHunk
@@ -74,56 +88,58 @@ end
 M.unpack_hunk = function(hunk)
   local start_old_1i, count_old, start_new_1i, count_new = unpack(hunk)
 
-  local start_old_0i = start_old_1i - 1
-  local start_new_0i = start_new_1i - 1
-  local end_old_1i_excl = start_old_1i + count_old
-  local end_old_1i_incl = end_old_1i_excl - 1
-  local end_old_0i_excl = end_old_1i_excl - 1
-  local end_old_0i_incl = end_old_1i_incl - 1
+  local kind = (function()
+    if count_old == 0 then
+      return "insertion"
+    end
+    if count_new == 0 then
+      return "deletion"
+    end
+    return "change"
+  end)()
 
-  -- Leading deletion:
-  -- If `old` starts with a line deleted in `new`, vim.text.diff reports
-  -- start_new_1i as 0.
-  local start_old_1i_visible = math.max(1, start_old_1i)
+  local old_side
+  if kind == "insertion" then
+    old_side = {
+      after_old_1i = start_old_1i,
+      after_old_1i_visible = math.max(1, start_old_1i),
+    }
+  else
+    local end_old_1i_excl = start_old_1i + count_old
+    old_side = {
+      start_old_1i = start_old_1i,
+      start_old_0i = start_old_1i - 1,
+      count_old = count_old,
+      end_old_1i_excl = end_old_1i_excl,
+      end_old_1i_incl = end_old_1i_excl - 1,
+      end_old_0i_excl = end_old_1i_excl - 1,
+      end_old_0i_incl = end_old_1i_excl - 2,
+    }
+  end
 
-  -- Leading insertion:
-  -- If `new` starts with a line not present in `old`, vim.text.diff reports
-  -- start_old_1i as 0.
-  local start_new_1i_visible = math.max(1, start_new_1i)
+  local new_side
+  if kind == "deletion" then
+    new_side = {
+      after_new_1i = start_new_1i,
+      after_new_1i_visible = math.max(1, start_new_1i),
+    }
+  else
+    local end_new_1i_excl = start_new_1i + count_new
+    new_side = {
+      start_new_1i = start_new_1i,
+      start_new_0i = start_new_1i - 1,
+      count_new = count_new,
+      end_new_1i_excl = end_new_1i_excl,
+      end_new_1i_incl = end_new_1i_excl - 1,
+      end_new_0i_excl = end_new_1i_excl - 1,
+      end_new_0i_incl = end_new_1i_excl - 2,
+    }
+  end
 
-  -- Leading deletion:
-  -- end_new_1i_excl=0
-  local end_new_1i_excl = start_new_1i + count_new
-  -- and end_new_1i_incl=-1
-  local end_new_1i_incl = end_new_1i_excl - 1
-  local end_new_0i_excl = end_new_1i_excl - 1
-  local end_new_0i_incl = end_new_1i_incl - 1
+  local is_leading = (kind == "insertion" and start_old_1i == 0)
+    or (kind == "deletion" and start_new_1i == 0)
 
-  local is_deletion = count_new == 0
-  local is_insertion = count_old == 0
-
-  return {
-    start_old_1i = start_old_1i,
-    start_old_1i_visible = start_old_1i_visible,
-    start_old_0i = start_old_0i,
-    count_old = count_old,
-    end_old_1i_excl = end_old_1i_excl,
-    end_old_1i_incl = end_old_1i_incl,
-    end_old_0i_excl = end_old_0i_excl,
-    end_old_0i_incl = end_old_0i_incl,
-
-    start_new_1i = start_new_1i,
-    start_new_1i_visible = start_new_1i_visible,
-    start_new_0i = start_new_0i,
-    count_new = count_new,
-    end_new_1i_excl = end_new_1i_excl,
-    end_new_1i_incl = end_new_1i_incl,
-    end_new_0i_excl = end_new_0i_excl,
-    end_new_0i_incl = end_new_0i_incl,
-
-    is_deletion = is_deletion,
-    is_insertion = is_insertion,
-  }
+  return vim.tbl_extend("error", old_side, new_side, { kind = kind, is_leading = is_leading })
 end
 
 --- @type fun(cmd: string[], opts: vim.SystemOpts?): vim.SystemCompleted
@@ -238,16 +254,24 @@ local update_signs = vim.schedule_wrap(function()
     local hunk = M.unpack_hunk(raw_hunk)
 
     local hunk_hl_group = (function()
-      if hunk.is_deletion then
+      if hunk.kind == "deletion" then
         return "DiffSignDelete"
       end
-      if hunk.is_insertion then
+      if hunk.kind == "insertion" then
         return "DiffSignAdd"
       end
       return "DiffSignChange"
     end)()
 
-    for row_1i = hunk.start_new_1i_visible, math.max(hunk.end_new_1i_incl, hunk.start_new_1i_visible) do
+    local first_row_1i, last_row_1i
+    if hunk.kind == "deletion" then
+      first_row_1i = hunk.after_new_1i_visible
+      last_row_1i = hunk.after_new_1i_visible
+    else
+      first_row_1i = hunk.start_new_1i
+      last_row_1i = hunk.end_new_1i_incl
+    end
+    for row_1i = first_row_1i, last_row_1i do
       local row_0i = row_1i - 1
       if row_0i >= 0 then
         table.insert(rows_to_hl, { row_0i = row_0i, hl = hunk_hl_group })
@@ -262,6 +286,15 @@ local update_signs = vim.schedule_wrap(function()
     })
   end
 end)
+
+--- @param hunk UnpackedHunk
+--- @return integer
+local get_first_new_row_1i = function(hunk)
+  if hunk.kind == "deletion" then
+    return hunk.after_new_1i_visible
+  end
+  return hunk.start_new_1i
+end
 
 --- @param direction 'next' | 'prev'
 local function navigate_hunk(direction)
@@ -288,14 +321,15 @@ local function navigate_hunk(direction)
 
   for _, raw_hunk in ipairs(indices) do
     local hunk = M.unpack_hunk(raw_hunk)
+    local hunk_row_1i = get_first_new_row_1i(hunk)
     if direction == "next" then
-      if hunk.start_new_1i_visible > row_1i then
-        next_hunk_row_1i = hunk.start_new_1i_visible
+      if hunk_row_1i > row_1i then
+        next_hunk_row_1i = hunk_row_1i
         break
       end
     else
-      if hunk.start_new_1i_visible < row_1i then
-        next_hunk_row_1i = hunk.start_new_1i_visible
+      if hunk_row_1i < row_1i then
+        next_hunk_row_1i = hunk_row_1i
         break
       end
     end
@@ -304,11 +338,11 @@ local function navigate_hunk(direction)
   if next_hunk_row_1i == nil then
     if direction == "next" then
       local hunk = M.unpack_hunk(buf_state.indices[1])
-      vim.api.nvim_win_set_cursor(0, { hunk.start_new_1i_visible, 0 })
+      vim.api.nvim_win_set_cursor(0, { get_first_new_row_1i(hunk), 0 })
       return notify(vim.log.levels.INFO, "Wrapping to the first hunk")
     else
       local hunk = M.unpack_hunk(buf_state.indices[#buf_state.indices])
-      vim.api.nvim_win_set_cursor(0, { hunk.start_new_1i_visible, 0 })
+      vim.api.nvim_win_set_cursor(0, { get_first_new_row_1i(hunk), 0 })
       return notify(vim.log.levels.INFO, "Wrapping to the last hunk")
     end
   end
@@ -328,9 +362,9 @@ local function reset_hunk(opts)
     local hunk = M.unpack_hunk(raw_hunk)
 
     local hunk_overlaps_range = false
-    if hunk.is_deletion then
-      hunk_overlaps_range = hunk.start_new_1i_visible >= opts.start_line_1i
-        and hunk.start_new_1i_visible <= opts.end_line_1i_incl
+    if hunk.kind == "deletion" then
+      hunk_overlaps_range = hunk.after_new_1i_visible >= opts.start_line_1i
+        and hunk.after_new_1i_visible <= opts.end_line_1i_incl
     else
       hunk_overlaps_range = hunk.end_new_1i_incl >= opts.start_line_1i
         and hunk.start_new_1i <= opts.end_line_1i_incl
@@ -342,15 +376,15 @@ local function reset_hunk(opts)
   end
 
   for _, hunk in ipairs(tbl_reverse(matching_hunks)) do
-    local head_chunk =
-      vim.list_slice(opts.state.index_lines, hunk.start_old_1i, hunk.end_old_1i_incl)
+    local head_chunk = hunk.kind == "insertion" and {}
+      or vim.list_slice(opts.state.index_lines, hunk.start_old_1i, hunk.end_old_1i_incl)
 
-    if hunk.is_deletion then
-      local insert_after_0i = hunk.start_new_0i + 1
+    if hunk.kind == "deletion" then
+      local insert_index_0i = hunk.after_new_1i
       vim.api.nvim_buf_set_lines(
         opts.curr_bufnr,
-        insert_after_0i,
-        insert_after_0i,
+        insert_index_0i,
+        insert_index_0i,
         true,
         head_chunk
       )
