@@ -199,6 +199,19 @@ local function trigger_diff_update()
   child.cmd "doautocmd BufEnter"
 end
 
+--- @param index_content string
+--- @param worktree_lines string[]
+--- @return integer
+local function prepare_diff(index_content, worktree_lines)
+  mock_read_index_file(index_content)
+  set_worktree_buffer("test.txt", worktree_lines)
+  trigger_diff_update()
+
+  local bufnr = child.api.nvim_get_current_buf()
+  expect_hunks(bufnr)
+  return bufnr
+end
+
 local T = new_set {
   hooks = {
     pre_case = function()
@@ -215,11 +228,105 @@ local T = new_set {
 T["setup"] = new_set()
 
 T["setup"]["creates global keymaps"] = function()
-  -- TODO: verify <Plug>GitHunksNextHunk, <Plug>GitHunksPrevHunk, etc.
+  local descriptions = child.lua_func(function()
+    return {
+      next = vim.fn.maparg("<Plug>GitHunksNextHunk", "n", false, true).desc,
+      prev = vim.fn.maparg("<Plug>GitHunksPrevHunk", "n", false, true).desc,
+      reset_normal = vim.fn.maparg("<Plug>GitHunksResetHunk", "n", false, true).desc,
+      reset_visual = vim.fn.maparg("<Plug>GitHunksResetHunk", "x", false, true).desc,
+      reset_file = vim.fn.maparg("<Plug>GitHunksResetFile", "n", false, true).desc,
+    }
+  end)
+
+  eq(descriptions, {
+    next = "Navigate to the next hunk",
+    prev = "Navigate to the prev hunk",
+    reset_normal = "Reset the hunk on the current line",
+    reset_visual = "Reset the visually selected hunk",
+    reset_file = "Reset the entire file",
+  })
 end
 
 T["setup"]["creates global autocommands"] = function()
-  -- TODO: verify GitHunks* autocommand groups exist.
+  local groups = child.lua_func(function()
+    local get_autocmds = vim.api.nvim_get_autocmds
+    return {
+      highlights = #get_autocmds { group = "GitHunksHighlights" },
+      text = #get_autocmds { group = "GitHunksTextEvents" },
+      buffers = #get_autocmds { group = "GitHunksBufEvents" },
+      index = get_autocmds({ group = "GitHunksIndexEvents" })[1].pattern,
+      cleanup = get_autocmds({ group = "GitHunksCleanup" })[1].event,
+      watcher_cleanup = get_autocmds({ group = "GitHunksWatcherCleanup" })[1].event,
+    }
+  end)
+
+  eq(groups, {
+    highlights = 1,
+    text = 2,
+    buffers = 3,
+    index = "GitIndexChanged",
+    cleanup = "BufDelete",
+    watcher_cleanup = "VimLeavePre",
+  })
+end
+
+T["setup"]["creates one watcher, dispatches Git events, and closes it on exit"] = function()
+  child.restart { "-u", "scripts/minimal_init.lua" }
+  child.lua_func(function()
+    M = require "git-hunks"
+    vim.api.nvim_exec_autocmds("VimLeavePre", {})
+    _G.watcher_creations = 0
+    _G.watcher_events = {}
+    _G.test_watcher = {
+      start = function(self, _, _, callback)
+        self.callback = callback
+        return true
+      end,
+      is_closing = function(self)
+        return self.closed or false
+      end,
+      close = function(self)
+        self.closed = true
+      end,
+    }
+    vim.uv.new_fs_event = function()
+      _G.watcher_creations = _G.watcher_creations + 1
+      return _G.test_watcher
+    end
+    vim.api.nvim_create_autocmd("User", {
+      pattern = { "GitIndexChanged", "GitHeadChanged" },
+      callback = function(event)
+        table.insert(_G.watcher_events, event.match)
+      end,
+    })
+
+    M.setup()
+    M.setup()
+  end)
+
+  expect_state(function()
+    return child.lua_func(function()
+      return _G.test_watcher.callback ~= nil
+    end)
+  end)
+  local watcher_events = child.lua_func(function()
+    _G.test_watcher.callback(nil, "index")
+    _G.test_watcher.callback(nil, "HEAD")
+    vim.wait(1000, function()
+      return #_G.watcher_events == 2
+    end)
+    table.sort(_G.watcher_events)
+    return _G.watcher_events
+  end)
+  eq(watcher_events, { "GitHeadChanged", "GitIndexChanged" })
+
+  child.api.nvim_exec_autocmds("VimLeavePre", {})
+  eq(
+    child.lua_func(function()
+      return { _G.watcher_creations, _G.test_watcher.closed }
+    end),
+    { 1, true }
+  )
 end
 
 T["unpack hunk"] = new_set()
@@ -287,18 +394,56 @@ end
 
 T["hunk navigation"] = new_set()
 
-T["hunk navigation"]["jumps to next hunk"] = function()
+T["hunk navigation"]["quietly stays put when there are no hunks"] = function()
   mock_read_index_file [[line1
+line2
+]]
+  set_worktree_buffer("test.txt", { "line1", "line2" })
+  child.lua_func(function()
+    local read_index_file = M.read_index_file
+    _G.read_count = 0
+    _G.notification_count = 0
+    M.read_index_file = function(rel_filename)
+      _G.read_count = _G.read_count + 1
+      return read_index_file(rel_filename)
+    end
+    --- @diagnostic disable-next-line: duplicate-set-field
+    vim.notify = function()
+      _G.notification_count = _G.notification_count + 1
+    end
+  end)
+  trigger_diff_update()
+
+  expect_state(function()
+    return child.lua_func(function()
+      return _G.read_count >= 2
+    end)
+  end)
+  child.lua_func(function()
+    vim.wait(30)
+  end)
+  child.api.nvim_win_set_cursor(0, { 2, 0 })
+  child.type_keys "<Plug>GitHunksNextHunk"
+
+  expect_cursor(2)
+  eq(
+    child.lua_func(function()
+      return _G.notification_count
+    end),
+    0
+  )
+end
+
+T["hunk navigation"]["jumps to next hunk"] = function()
+  prepare_diff(
+    [[line1
 line2
 line3
 line4
 line5
-]]
-  set_worktree_buffer("test.txt", { "line1", "line2 changed", "line3", "line4 changed", "line5" })
-  trigger_diff_update()
-
-  local bufnr = child.api.nvim_get_current_buf()
-  expect_hunks(bufnr)
+]],
+    { "line1", "line2 changed", "line3", "line4 changed", "line5" }
+  )
 
   child.api.nvim_win_set_cursor(0, { 1, 0 })
   child.type_keys "<Plug>GitHunksNextHunk"
@@ -307,17 +452,15 @@ line5
 end
 
 T["hunk navigation"]["jumps to previous hunk"] = function()
-  mock_read_index_file [[line1
+  prepare_diff(
+    [[line1
 line2
 line3
 line4
 line5
-]]
-  set_worktree_buffer("test.txt", { "line1", "line2 changed", "line3", "line4 changed", "line5" })
-  trigger_diff_update()
-
-  local bufnr = child.api.nvim_get_current_buf()
-  expect_hunks(bufnr)
+]],
+    { "line1", "line2 changed", "line3", "line4 changed", "line5" }
+  )
 
   child.api.nvim_win_set_cursor(0, { 4, 0 })
   child.type_keys "<Plug>GitHunksPrevHunk"
@@ -326,17 +469,15 @@ line5
 end
 
 T["hunk navigation"]["wraps to first hunk after last"] = function()
-  mock_read_index_file [[line1
+  prepare_diff(
+    [[line1
 line2
 line3
 line4
 line5
-]]
-  set_worktree_buffer("test.txt", { "line1", "line2 changed", "line3", "line4 changed", "line5" })
-  trigger_diff_update()
-
-  local bufnr = child.api.nvim_get_current_buf()
-  expect_hunks(bufnr)
+]],
+    { "line1", "line2 changed", "line3", "line4 changed", "line5" }
+  )
 
   child.api.nvim_win_set_cursor(0, { 5, 0 })
   child.type_keys "<Plug>GitHunksNextHunk"
@@ -345,18 +486,16 @@ line5
 end
 
 T["hunk navigation"]["navigates to a leading deletion"] = function()
-  mock_read_index_file [[gone
+  prepare_diff(
+    [[gone
 line1
 line2
 line3
 line4
 line5
-]]
-  set_worktree_buffer("test.txt", { "line1", "line2", "line3 changed", "line4", "line5" })
-  trigger_diff_update()
-
-  local bufnr = child.api.nvim_get_current_buf()
-  expect_hunks(bufnr)
+]],
+    { "line1", "line2", "line3 changed", "line4", "line5" }
+  )
 
   child.api.nvim_win_set_cursor(0, { 3, 0 })
   child.type_keys "<Plug>GitHunksPrevHunk"
@@ -365,15 +504,13 @@ line5
 end
 
 T["hunk navigation"]["wraps to first leading deletion"] = function()
-  mock_read_index_file [[gone
+  prepare_diff(
+    [[gone
 line1
 line2
-]]
-  set_worktree_buffer("test.txt", { "line1", "line2" })
-  trigger_diff_update()
-
-  local bufnr = child.api.nvim_get_current_buf()
-  expect_hunks(bufnr)
+]],
+    { "line1", "line2" }
+  )
 
   child.api.nvim_win_set_cursor(0, { 2, 0 })
   child.type_keys "<Plug>GitHunksNextHunk"
@@ -382,22 +519,70 @@ line2
 end
 
 T["hunk navigation"]["wraps to last hunk before first"] = function()
-  mock_read_index_file [[line1
+  prepare_diff(
+    [[line1
 line2
 line3
 line4
 line5
-]]
-  set_worktree_buffer("test.txt", { "line1", "line2 changed", "line3", "line4 changed", "line5" })
-  trigger_diff_update()
-
-  local bufnr = child.api.nvim_get_current_buf()
-  expect_hunks(bufnr)
+]],
+    { "line1", "line2 changed", "line3", "line4 changed", "line5" }
+  )
 
   child.api.nvim_win_set_cursor(0, { 1, 0 })
   child.type_keys "<Plug>GitHunksPrevHunk"
 
   expect_cursor(4)
+end
+
+T["async state updates"] = new_set()
+
+T["async state updates"]["ignores stale diff results after a newer update"] = function()
+  local old_index = "old1\nold2\nold3\n"
+  local new_index = "new1\nold2\nold3\n"
+  child.lua_func(function(old_index_arg, new_index_arg)
+    _G.read_count = 0
+    M.read_index_file = function()
+      _G.read_count = _G.read_count + 1
+      local read_number = _G.read_count
+      local content = new_index_arg
+      if read_number == 1 or read_number == 4 then
+        content = old_index_arg
+      end
+      return vim.async.run(function()
+        if read_number == 1 then
+          vim.async.sleep(100)
+        end
+        return content
+      end)
+    end
+  end, old_index, new_index)
+  set_worktree_buffer("test.txt", { "new1", "working", "old3" })
+
+  trigger_diff_update()
+  expect_state(function()
+    return child.lua_func(function()
+      return _G.read_count >= 1
+    end)
+  end)
+  trigger_diff_update()
+  expect_state(function()
+    return child.lua_func(function()
+      return _G.read_count >= 3
+    end)
+  end)
+  child.lua_func(function()
+    vim.wait(150)
+  end)
+  child.type_keys "<Plug>GitHunksResetFile"
+
+  eq(
+    child.lua_func(function()
+      return _G.read_count
+    end),
+    3
+  )
+  expect_lines { "new1", "old2", "old3" }
 end
 
 T["hunk signs"] = new_set()
@@ -425,67 +610,57 @@ T["hunk signs"]["preserves user highlight overrides across colorscheme changes"]
 end
 
 T["hunk signs"]["adds extmarks for added lines"] = function()
-  mock_read_index_file [[line1
+  local bufnr = prepare_diff(
+    [[line1
 line2
 line3
-]]
-  set_worktree_buffer("test.txt", { "line1", "line2", "line3", "line4" })
-  trigger_diff_update()
-
-  local bufnr = child.api.nvim_get_current_buf()
-  expect_hunks(bufnr)
+]],
+    { "line1", "line2", "line3", "line4" }
+  )
   expect_sign(bufnr, 4, "DiffSignAdd")
 end
 
 T["hunk signs"]["adds extmarks for deleted lines"] = function()
-  mock_read_index_file [[line1
+  local bufnr = prepare_diff(
+    [[line1
 line2
 line3
 line4
-]]
-  set_worktree_buffer("test.txt", { "line1", "line2", "line4" })
-  trigger_diff_update()
-
-  local bufnr = child.api.nvim_get_current_buf()
-  expect_hunks(bufnr)
+]],
+    { "line1", "line2", "line4" }
+  )
   expect_sign(bufnr, 2, "DiffSignDelete")
 end
 
 T["hunk signs"]["marks a leading deletion on the first line"] = function()
-  mock_read_index_file [[gone
+  local bufnr = prepare_diff(
+    [[gone
 line1
 line2
-]]
-  set_worktree_buffer("test.txt", { "line1", "line2" })
-  trigger_diff_update()
-
-  local bufnr = child.api.nvim_get_current_buf()
-  expect_hunks(bufnr)
+]],
+    { "line1", "line2" }
+  )
   expect_sign(bufnr, 1, "DiffSignDelete")
 end
 
 T["hunk signs"]["adds extmarks for changed lines"] = function()
-  mock_read_index_file [[line1
+  local bufnr = prepare_diff(
+    [[line1
 line2
 line3
-]]
-  set_worktree_buffer("test.txt", { "line1", "line2 changed", "line3" })
-  trigger_diff_update()
-
-  local bufnr = child.api.nvim_get_current_buf()
-  expect_hunks(bufnr)
+]],
+    { "line1", "line2 changed", "line3" }
+  )
   expect_sign(bufnr, 2, "DiffSignChange")
 end
 
 T["hunk signs"]["refreshes after the index changes"] = function()
-  mock_read_index_file [[line1
+  local bufnr = prepare_diff(
+    [[line1
 line2
-]]
-  set_worktree_buffer("test.txt", { "line1", "line2", "line3" })
-  trigger_diff_update()
-
-  local bufnr = child.api.nvim_get_current_buf()
-  expect_hunks(bufnr)
+]],
+    { "line1", "line2", "line3" }
+  )
   expect_sign(bufnr, 3, "DiffSignAdd")
 
   mock_read_index_file [[line1
@@ -501,14 +676,12 @@ line3
 end
 
 T["hunk signs"]["clears stale state when the index file is missing"] = function()
-  mock_read_index_file [[line1
+  local bufnr = prepare_diff(
+    [[line1
 line2
-]]
-  set_worktree_buffer("test.txt", { "line1", "line2 changed" })
-  trigger_diff_update()
-
-  local bufnr = child.api.nvim_get_current_buf()
-  expect_hunks(bufnr)
+]],
+    { "line1", "line2 changed" }
+  )
 
   mock_read_index_files {}
   child.api.nvim_exec_autocmds("User", { pattern = "GitIndexChanged" })
@@ -540,17 +713,15 @@ end
 T["reset hunk"] = new_set()
 
 T["reset hunk"]["resets a single-line hunk"] = function()
-  mock_read_index_file [[line1
+  prepare_diff(
+    [[line1
 line2
 line3
 line4
 line5
-]]
-  set_worktree_buffer("test.txt", { "line1", "line2 changed", "line3", "line4", "line5" })
-  trigger_diff_update()
-
-  local bufnr = child.api.nvim_get_current_buf()
-  expect_hunks(bufnr)
+]],
+    { "line1", "line2 changed", "line3", "line4", "line5" }
+  )
 
   child.api.nvim_win_set_cursor(0, { 2, 0 })
   child.type_keys "<Plug>GitHunksResetHunk"
@@ -559,17 +730,15 @@ line5
 end
 
 T["reset hunk"]["resets a multi-line hunk"] = function()
-  mock_read_index_file [[line1
+  prepare_diff(
+    [[line1
 line2
 line3
 line4
 line5
-]]
-  set_worktree_buffer("test.txt", { "line1", "line2 changed", "line3 changed", "line4", "line5" })
-  trigger_diff_update()
-
-  local bufnr = child.api.nvim_get_current_buf()
-  expect_hunks(bufnr)
+]],
+    { "line1", "line2 changed", "line3 changed", "line4", "line5" }
+  )
 
   child.api.nvim_win_set_cursor(0, { 2, 0 })
   child.type_keys "<Plug>GitHunksResetHunk"
@@ -578,17 +747,15 @@ line5
 end
 
 T["reset hunk"]["resets a deleted hunk"] = function()
-  mock_read_index_file [[line1
+  prepare_diff(
+    [[line1
 line2
 line3
 line4
 line5
-]]
-  set_worktree_buffer("test.txt", { "line1", "line3", "line4", "line5" })
-  trigger_diff_update()
-
-  local bufnr = child.api.nvim_get_current_buf()
-  expect_hunks(bufnr)
+]],
+    { "line1", "line3", "line4", "line5" }
+  )
 
   child.api.nvim_win_set_cursor(0, { 1, 0 })
   child.type_keys "<Plug>GitHunksResetHunk"
@@ -597,15 +764,13 @@ line5
 end
 
 T["reset hunk"]["resets a leading deletion"] = function()
-  mock_read_index_file [[gone
+  prepare_diff(
+    [[gone
 line1
 line2
-]]
-  set_worktree_buffer("test.txt", { "line1", "line2" })
-  trigger_diff_update()
-
-  local bufnr = child.api.nvim_get_current_buf()
-  expect_hunks(bufnr)
+]],
+    { "line1", "line2" }
+  )
 
   child.api.nvim_win_set_cursor(0, { 1, 0 })
   child.type_keys "<Plug>GitHunksResetHunk"
@@ -614,17 +779,15 @@ line2
 end
 
 T["reset hunk"]["does nothing when cursor is not on a hunk"] = function()
-  mock_read_index_file [[line1
+  prepare_diff(
+    [[line1
 line2
 line3
 line4
 line5
-]]
-  set_worktree_buffer("test.txt", { "line1", "line2 changed", "line3", "line4", "line5" })
-  trigger_diff_update()
-
-  local bufnr = child.api.nvim_get_current_buf()
-  expect_hunks(bufnr)
+]],
+    { "line1", "line2 changed", "line3", "line4", "line5" }
+  )
 
   child.api.nvim_win_set_cursor(0, { 4, 0 })
   child.type_keys "<Plug>GitHunksResetHunk"
@@ -633,17 +796,15 @@ line5
 end
 
 T["reset hunk"]["resets a visually selected range"] = function()
-  mock_read_index_file [[line1
+  prepare_diff(
+    [[line1
 line2
 line3
 line4
 line5
-]]
-  set_worktree_buffer("test.txt", { "line1", "line2 changed", "line3 changed", "line4", "line5" })
-  trigger_diff_update()
-
-  local bufnr = child.api.nvim_get_current_buf()
-  expect_hunks(bufnr)
+]],
+    { "line1", "line2 changed", "line3 changed", "line4", "line5" }
+  )
 
   child.api.nvim_win_set_cursor(0, { 2, 0 })
   child.lua_func(function()
@@ -659,17 +820,15 @@ end
 T["reset file"] = new_set()
 
 T["reset file"]["resets a leading deletion"] = function()
-  mock_read_index_file [[gone
+  prepare_diff(
+    [[gone
 line1
 line2
 line3
 line4
-]]
-  set_worktree_buffer("test.txt", { "line1", "line2 changed", "line3", "line4" })
-  trigger_diff_update()
-
-  local bufnr = child.api.nvim_get_current_buf()
-  expect_hunks(bufnr)
+]],
+    { "line1", "line2 changed", "line3", "line4" }
+  )
 
   child.type_keys "<Plug>GitHunksResetFile"
 
@@ -677,24 +836,27 @@ line4
 end
 
 T["reset file"]["resets the entire file"] = function()
-  mock_read_index_file [[line1
+  prepare_diff(
+    [[line1
 line2
 line3
 line4
 line5
-]]
-  set_worktree_buffer(
-    "test.txt",
+]],
     { "line1 changed", "line2", "line3 changed", "line4", "line5 changed" }
   )
-  trigger_diff_update()
-
-  local bufnr = child.api.nvim_get_current_buf()
-  expect_hunks(bufnr)
 
   child.type_keys "<Plug>GitHunksResetFile"
 
   expect_lines { "line1", "line2", "line3", "line4", "line5" }
+end
+
+T["reset file"]["resets an inserted file to empty index content"] = function()
+  prepare_diff("", { "inserted" })
+
+  child.type_keys "<Plug>GitHunksResetFile"
+
+  expect_lines { "" }
 end
 
 return T

@@ -11,9 +11,10 @@ local async_iterators = require "git-hunks.async-iterators"
 local cb_async = function(callback)
   return function(...)
     local arguments = { ... }
+    local argument_count = select("#", ...)
     vim.async
       .run("cb_async_task", function()
-        callback(unpack(arguments))
+        callback(unpack(arguments, 1, argument_count))
       end)
       :raise_on_error()
   end
@@ -194,9 +195,15 @@ end
 --- @type table<number, DiffState>
 local buffer_state = {}
 
+--- @type table<number, integer>
+local buffer_update_id = {}
+
 local ns_id = vim.api.nvim_create_namespace "GitHunks"
 
-local clear_state_for_buf = function(bufnr)
+local clear_state_for_buf = function(bufnr, update_id)
+  if update_id ~= nil and buffer_update_id[bufnr] ~= update_id then
+    return
+  end
   buffer_state[bufnr] = nil
   ensure_main_loop()
   if vim.api.nvim_buf_is_valid(bufnr) then
@@ -206,15 +213,18 @@ end
 
 --- @type fun(bufnr: number): vim.async.Task
 local update_state_for_buf = function(bufnr)
+  local update_id = (buffer_update_id[bufnr] or 0) + 1
+  buffer_update_id[bufnr] = update_id
+
   return vim.async.run("update_state_for_buf_task", function()
     ensure_main_loop()
     if not vim.api.nvim_buf_is_valid(bufnr) then
-      clear_state_for_buf(bufnr)
+      clear_state_for_buf(bufnr, update_id)
       return
     end
     local bufname = vim.fs.relpath(vim.fn.getcwd(), vim.api.nvim_buf_get_name(bufnr))
     if bufname == nil then
-      clear_state_for_buf(bufnr)
+      clear_state_for_buf(bufnr, update_id)
       return
     end
 
@@ -222,14 +232,20 @@ local update_state_for_buf = function(bufnr)
       rel_filename = bufname,
       file_bufnr = bufnr,
     })
+    if buffer_update_id[bufnr] ~= update_id then
+      return
+    end
     if indices == nil then
-      clear_state_for_buf(bufnr)
+      clear_state_for_buf(bufnr, update_id)
       return
     end
 
     local index_str = vim.async.await(M.read_index_file(bufname)) --[[@as string?]]
+    if buffer_update_id[bufnr] ~= update_id then
+      return
+    end
     if index_str == nil then
-      clear_state_for_buf(bufnr)
+      clear_state_for_buf(bufnr, update_id)
       return
     end
     local index_lines = vim.split(index_str:gsub("\n$", "") .. "\n", "\n", { trimempty = true })
@@ -313,7 +329,7 @@ local function navigate_hunk(direction)
   end)()
 
   if #indices == 0 then
-    return notify(vim.log.levels.ERROR, "No hunks")
+    return
   end
 
   local row_1i = vim.api.nvim_win_get_cursor(0)[1]
@@ -414,6 +430,8 @@ local setup_highlights = function()
   })
 end
 
+local file_watcher = nil
+
 local setup_global_autocmds = function()
   local timer = nil
   vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
@@ -479,26 +497,46 @@ local setup_global_autocmds = function()
   vim.api.nvim_create_autocmd("BufDelete", {
     group = vim.api.nvim_create_augroup("GitHunksCleanup", { clear = true }),
     callback = function(event)
+      buffer_update_id[event.buf] = (buffer_update_id[event.buf] or 0) + 1
       buffer_state[event.buf] = nil
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("VimLeavePre", {
+    group = vim.api.nvim_create_augroup("GitHunksWatcherCleanup", { clear = true }),
+    callback = function()
+      if file_watcher ~= nil and not file_watcher:is_closing() then
+        file_watcher:close()
+      end
+      file_watcher = nil
     end,
   })
 end
 
+local file_watcher_setup_pending = false
+
 --- @type fun():nil
 local setup_file_watcher = cb_async(function()
+  if file_watcher ~= nil or file_watcher_setup_pending then
+    return
+  end
+  file_watcher_setup_pending = true
+
   local git_dir = vim.async.await(vim_system_stdout { "git", "rev-parse", "--absolute-git-dir" }) --[[@as string?]]
   ensure_main_loop()
   if git_dir == nil then
+    file_watcher_setup_pending = false
     return
   end
   local git_dir_path = vim.trim(git_dir)
 
   local index_watch = vim.uv.new_fs_event()
   if index_watch == nil then
-    return
+    file_watcher_setup_pending = false
+    return notify(vim.log.levels.ERROR, "Failed to create Git directory watcher")
   end
 
-  index_watch:start(
+  local started, err = index_watch:start(
     git_dir_path,
     {},
     cb_async(function(_, filename)
@@ -510,6 +548,14 @@ local setup_file_watcher = cb_async(function()
       end
     end)
   )
+  if not started then
+    index_watch:close()
+    file_watcher_setup_pending = false
+    return notify(vim.log.levels.ERROR, "Failed to watch Git directory: %s", err or "unknown error")
+  end
+
+  file_watcher = index_watch
+  file_watcher_setup_pending = false
 end)
 
 local setup_global_keymaps = function()
