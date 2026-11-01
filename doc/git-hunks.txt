@@ -10,6 +10,8 @@ Plug remaps .......................................... |git-hunks-plug-remaps|
 `<Plug>GitHunksPrevHunk` .................. |git-hunks-<plug>githunksprevhunk|
 `<Plug>GitHunksResetHunk` ................ |git-hunks-<plug>githunksresethunk|
 `<Plug>GitHunksResetFile` ................ |git-hunks-<plug>githunksresetfile|
+API .......................................................... |git-hunks-api|
+`require("git-hunks").setup()` ...... |git-hunks-require("git-hunks").setup()|
 Highlight groups ................................ |git-hunks-highlight-groups|
 Autocommand events ............................ |git-hunks-autocommand-events|
 `User GitIndexChanged` ...................... |git-hunks-user-gitindexchanged|
@@ -27,7 +29,7 @@ view for comparing any two git file locations.
 FEATURES                                                  *git-hunks-features*
 
 
-- 1 source file (~500 LOC), no dependencies
+- 2 source files (~700 LOC), 1 test file (~700 LOC), no runtime dependencies
 - Async diff computation via coroutines (no UI freezing)
 - Signs update on every edit with debouncing (300ms)
 - Watches `.git/index` and `.git/HEAD` for external changes (e.g. `git
@@ -75,6 +77,24 @@ Navigate to the previous hunk. Wraps to the last hunk if none remain.
 `<PLUG>GITHUNKSRESETFILE`                  *git-hunks-<plug>githunksresetfile*
 
 Reset the entire file to the index version.
+
+
+------------------------------------------------------------------------------
+API                                                            *git-hunks-api*
+
+
+
+                                                                              
+`REQUIRE("GIT-HUNKS").SETUP()`        *git-hunks-require("git-hunks").setup()*
+
+Initializes the plugin. The `plugin/git-hunks.lua` entrypoint calls this
+automatically when the plugin loads.
+
+The module also exposes `unpack_hunk(hunk)`, which converts a
+`vim.text.diff()` hunk index tuple into insertion, deletion, or change ranges,
+and `read_index_file(rel_filename)`, which returns a `vim.async.Task<string?>`
+containing the Git-index file contents or `nil` if it cannot be read. These
+helpers are for advanced use; normal configuration does not need them.
 
 
 ------------------------------------------------------------------------------

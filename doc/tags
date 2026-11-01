@@ -2,12 +2,14 @@ git-hunks-<plug>githunksnexthunk	git-hunks.txt	/*git-hunks-<plug>githunksnexthun
 git-hunks-<plug>githunksprevhunk	git-hunks.txt	/*git-hunks-<plug>githunksprevhunk*
 git-hunks-<plug>githunksresetfile	git-hunks.txt	/*git-hunks-<plug>githunksresetfile*
 git-hunks-<plug>githunksresethunk	git-hunks.txt	/*git-hunks-<plug>githunksresethunk*
+git-hunks-api	git-hunks.txt	/*git-hunks-api*
 git-hunks-autocommand-events	git-hunks.txt	/*git-hunks-autocommand-events*
 git-hunks-example-config	git-hunks.txt	/*git-hunks-example-config*
 git-hunks-features	git-hunks.txt	/*git-hunks-features*
 git-hunks-git-hunks.nvim	git-hunks.txt	/*git-hunks-git-hunks.nvim*
 git-hunks-highlight-groups	git-hunks.txt	/*git-hunks-highlight-groups*
 git-hunks-plug-remaps	git-hunks.txt	/*git-hunks-plug-remaps*
+git-hunks-require("git-hunks").setup()	git-hunks.txt	/*git-hunks-require("git-hunks").setup()*
 git-hunks-table-of-contents	git-hunks.txt	/*git-hunks-table-of-contents*
 git-hunks-user-githeadchanged	git-hunks.txt	/*git-hunks-user-githeadchanged*
 git-hunks-user-gitindexchanged	git-hunks.txt	/*git-hunks-user-gitindexchanged*

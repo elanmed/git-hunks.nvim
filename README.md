@@ -4,7 +4,7 @@ A minimal plugin to view, navigate, and reset git hunks. Also includes a diff vi
 
 ## Features
 
-- 1 source file (~500 LOC), no dependencies
+- 2 source files (~700 LOC), 1 test file (~700 LOC), no runtime dependencies
 - Async diff computation via coroutines (no UI freezing)
 - Signs update on every edit with debouncing (300ms)
 - Watches `.git/index` and `.git/HEAD` for external changes (e.g. `git checkout`, `git stash`, `git reset`)
@@ -40,6 +40,14 @@ Navigate to the previous hunk. Wraps to the last hunk if none remain.
 ### `<Plug>GitHunksResetFile`
 
 Reset the entire file to the index version.
+
+## API
+
+### `require("git-hunks").setup()`
+
+Initializes the plugin. The `plugin/git-hunks.lua` entrypoint calls this automatically when the plugin loads.
+
+The module also exposes `unpack_hunk(hunk)`, which converts a `vim.text.diff()` hunk index tuple into insertion, deletion, or change ranges, and `read_index_file(rel_filename)`, which returns a `vim.async.Task<string?>` containing the Git-index file contents or `nil` if it cannot be read. These helpers are for advanced use; normal configuration does not need them.
 
 ## Highlight groups
 
