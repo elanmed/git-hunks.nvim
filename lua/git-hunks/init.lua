@@ -366,6 +366,10 @@ local function navigate_hunk(direction)
   vim.api.nvim_win_set_cursor(0, { next_hunk_row_1i, 0 })
 end
 
+--- @class MatchingHunk
+--- @field hunk UnpackedHunk
+--- @field idx integer
+
 --- @class GetMatchingHunksOpts
 --- @field state DiffState
 --- @field start_line_1i number
@@ -373,9 +377,9 @@ end
 --- @field curr_bufnr number
 --- @param opts GetMatchingHunksOpts
 local function get_matching_hunks(opts)
-  --- @type UnpackedHunk[]
+  --- @type MatchingHunk[]
   local matching_hunks = {}
-  for _, raw_hunk in ipairs(opts.state.indices) do
+  for idx, raw_hunk in ipairs(opts.state.indices) do
     local hunk = M.unpack_hunk(raw_hunk)
 
     local hunk_overlaps_range = false
@@ -388,7 +392,12 @@ local function get_matching_hunks(opts)
     end
 
     if hunk_overlaps_range then
-      table.insert(matching_hunks, hunk)
+      --- @type MatchingHunk
+      local matching_hunk = {
+        hunk = hunk,
+        idx = idx,
+      }
+      table.insert(matching_hunks, matching_hunk)
     end
   end
   return matching_hunks
@@ -398,7 +407,9 @@ end
 local function reset_hunk(opts)
   local matching_hunks = get_matching_hunks(opts)
 
-  for _, hunk in ipairs(tbl_reverse(matching_hunks)) do
+  for _, matching_hunk in ipairs(tbl_reverse(matching_hunks)) do
+    --- @type UnpackedHunk
+    local hunk = matching_hunk.hunk
     local head_chunk = hunk.kind == "insertion" and {}
       or vim.list_slice(opts.state.index_lines, hunk.start_old_1i, hunk.end_old_1i_incl)
 
