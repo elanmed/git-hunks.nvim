@@ -114,11 +114,11 @@ end
 --- @class ChangeHunk : HunkOldRange, HunkNewRange
 --- @field kind "change"
 
---- @alias UnpackedHunk InsertionHunk | DeletionHunk | ChangeHunk
+--- @alias IndicesHunkUnpacked InsertionHunk | DeletionHunk | ChangeHunk
 
---- @alias DiffHunk { [1]: integer, [2]: integer, [3]: integer, [4]: integer }
---- @param hunk DiffHunk
---- @return UnpackedHunk
+--- @alias IndicesHunk { [1]: integer, [2]: integer, [3]: integer, [4]: integer }
+--- @param hunk IndicesHunk
+--- @return IndicesHunkUnpacked
 M.unpack_indices_hunk = function(hunk)
   local start_old_1i, count_old, start_new_1i, count_new = unpack(hunk)
 
@@ -202,9 +202,9 @@ end
 --- @field rel_filename string
 --- @field file_bufnr number
 
---- @type fun(opts: GenerateDiffParams): vim.async.Task<{indices: DiffHunk[], unified: string}?>
+--- @type fun(opts: GenerateDiffParams): vim.async.Task<{indices: IndicesHunk[], unified: string}?>
 local generate_diff = function(opts)
-  --- @return {indices: DiffHunk[], unified: string}?
+  --- @return {indices: IndicesHunk[], unified: string}?
   return vim.async.run(function()
     local old_str = vim.async.await(M.read_index_file(opts.rel_filename)) --[[@as string?]]
     if old_str == nil then
@@ -217,14 +217,14 @@ local generate_diff = function(opts)
     end
     local new_lines = vim.api.nvim_buf_get_lines(opts.file_bufnr, 0, -1, false)
     local new_str = table.concat(new_lines, "\n"):gsub("\n$", "") .. "\n"
-    local indices = vim.text.diff(old_str, new_str, { result_type = "indices" }) --[[@as DiffHunk[]?]]
+    local indices = vim.text.diff(old_str, new_str, { result_type = "indices" }) --[[@as IndicesHunk[]?]]
     local unified = vim.text.diff(old_str, new_str, { result_type = "unified" }) --[[@as string]]
     return { indices = indices, unified = unified }
   end)
 end
 
 --- @class DiffState
---- @field unpacked_hunks UnpackedHunk[]
+--- @field indices_hunks_unpacked IndicesHunkUnpacked[]
 --- @field unified_hunks string[]
 --- @field index_lines string[]
 
@@ -267,7 +267,7 @@ local update_state_for_buf = function(bufnr)
     local diff = vim.async.await(generate_diff {
       rel_filename = bufname,
       file_bufnr = bufnr,
-    }) --[[@as {indices: DiffHunk[], unified: string}?]]
+    }) --[[@as {indices: IndicesHunk[], unified: string}?]]
     if buffer_update_id[bufnr] ~= update_id then
       return
     end
@@ -286,15 +286,15 @@ local update_state_for_buf = function(bufnr)
     end
     local index_lines = vim.split(index_str:gsub("\n$", "") .. "\n", "\n", { trimempty = true })
 
-    local unpacked_hunks = {}
+    local indices_hunks_unpacked = {}
     for _, raw_hunk in ipairs(diff.indices) do
-      table.insert(unpacked_hunks, M.unpack_indices_hunk(raw_hunk))
+      table.insert(indices_hunks_unpacked, M.unpack_indices_hunk(raw_hunk))
     end
 
     local unified_hunks = split_unified_hunks(diff.unified)
 
     buffer_state[bufnr] = {
-      unpacked_hunks = unpacked_hunks,
+      indices_hunks_unpacked = indices_hunks_unpacked,
       unified_hunks = unified_hunks,
       index_lines = index_lines,
     }
@@ -310,7 +310,7 @@ local update_signs = vim.schedule_wrap(function()
   end
 
   local rows_to_hl = {}
-  for _, hunk in ipairs(buf_state.unpacked_hunks) do
+  for _, hunk in ipairs(buf_state.indices_hunks_unpacked) do
     local hunk_hl_group = (function()
       if hunk.kind == "deletion" then
         return "DiffSignDelete"
@@ -345,7 +345,7 @@ local update_signs = vim.schedule_wrap(function()
   end
 end)
 
---- @param hunk UnpackedHunk
+--- @param hunk IndicesHunkUnpacked
 --- @return integer
 local get_first_new_row_1i = function(hunk)
   if hunk.kind == "deletion" then
@@ -365,9 +365,9 @@ local function navigate_hunk(direction)
 
   local hunks = (function()
     if direction == "next" then
-      return buf_state.unpacked_hunks
+      return buf_state.indices_hunks_unpacked
     end
-    return tbl_reverse(buf_state.unpacked_hunks)
+    return tbl_reverse(buf_state.indices_hunks_unpacked)
   end)()
 
   if #hunks == 0 then
@@ -394,11 +394,11 @@ local function navigate_hunk(direction)
 
   if next_hunk_row_1i == nil then
     if direction == "next" then
-      local hunk = buf_state.unpacked_hunks[1]
+      local hunk = buf_state.indices_hunks_unpacked[1]
       vim.api.nvim_win_set_cursor(0, { get_first_new_row_1i(hunk), 0 })
       return notify(vim.log.levels.INFO, "Wrapping to the first hunk")
     else
-      local hunk = buf_state.unpacked_hunks[#buf_state.unpacked_hunks]
+      local hunk = buf_state.indices_hunks_unpacked[#buf_state.indices_hunks_unpacked]
       vim.api.nvim_win_set_cursor(0, { get_first_new_row_1i(hunk), 0 })
       return notify(vim.log.levels.INFO, "Wrapping to the last hunk")
     end
@@ -408,8 +408,8 @@ local function navigate_hunk(direction)
 end
 
 --- @class MatchingHunk
---- @field hunk UnpackedHunk
---- @field idx integer
+--- @field unpacked_indices_hunk IndicesHunkUnpacked
+--- @field unified_hunk string
 
 --- @class GetMatchingHunksOpts
 --- @field state DiffState
@@ -420,7 +420,7 @@ end
 local function get_matching_hunks(opts)
   --- @type MatchingHunk[]
   local matching_hunks = {}
-  for idx, hunk in ipairs(opts.state.unpacked_hunks) do
+  for idx, hunk in ipairs(opts.state.indices_hunks_unpacked) do
     local hunk_overlaps_range = false
     if hunk.kind == "deletion" then
       hunk_overlaps_range = hunk.after_new_1i_visible >= opts.start_line_1i
@@ -431,10 +431,11 @@ local function get_matching_hunks(opts)
     end
 
     if hunk_overlaps_range then
+      local unified_hunk = opts.state.unified_hunks[idx]
       --- @type MatchingHunk
       local matching_hunk = {
-        hunk = hunk,
-        idx = idx,
+        unpacked_indices_hunk = unpacked_indices_hunk,
+        unified_hunk = unified_hunk,
       }
       table.insert(matching_hunks, matching_hunk)
     end
@@ -447,7 +448,7 @@ local function reset_hunk(opts)
   local matching_hunks = get_matching_hunks(opts)
 
   for _, matching_hunk in ipairs(tbl_reverse(matching_hunks)) do
-    --- @type UnpackedHunk
+    --- @type IndicesHunkUnpacked
     local hunk = matching_hunk.hunk
     local head_chunk = hunk.kind == "insertion" and {}
       or vim.list_slice(opts.state.index_lines, hunk.start_old_1i, hunk.end_old_1i_incl)
@@ -470,6 +471,17 @@ local function reset_hunk(opts)
         head_chunk
       )
     end
+  end
+end
+
+--- @param opts GetMatchingHunksOpts
+local function stage_hunk(opts)
+  local matching_hunks = get_matching_hunks(opts)
+
+  local matching_unified_hunks = {}
+  for _, matching_hunk in ipairs(matching_hunks) do
+    -- concat into a patch
+    -- apply the patch
   end
 end
 
@@ -622,6 +634,22 @@ local setup_global_keymaps = function()
   vim.keymap.set("n", "<Plug>GitHunksPrevHunk", function()
     navigate_hunk "prev"
   end, { desc = "Navigate to the prev hunk" })
+
+  vim.keymap.set("n", "<Plug>GitHunksStageHunk", function()
+    local curr_bufnr = vim.api.nvim_get_current_buf()
+    local buf_state = buffer_state[curr_bufnr]
+    if buf_state == nil then
+      return notify(vim.log.levels.ERROR, "Missing diff state for this buffer")
+    end
+
+    local row_1i = vim.api.nvim_win_get_cursor(0)[1]
+    stage_hunk {
+      state = buf_state,
+      curr_bufnr = curr_bufnr,
+      start_line_1i = row_1i,
+      end_line_1i_incl = row_1i,
+    }
+  end, { desc = "Stage the hunk on the current line" })
 
   vim.keymap.set("n", "<Plug>GitHunksResetHunk", function()
     local curr_bufnr = vim.api.nvim_get_current_buf()
