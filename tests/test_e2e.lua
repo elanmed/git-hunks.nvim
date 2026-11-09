@@ -297,6 +297,8 @@ T["setup"]["creates global keymaps"] = function()
     return {
       next = vim.fn.maparg("<Plug>GitHunksNextHunk", "n", false, true).desc,
       prev = vim.fn.maparg("<Plug>GitHunksPrevHunk", "n", false, true).desc,
+      stage_normal = vim.fn.maparg("<Plug>GitHunksStageHunk", "n", false, true).desc,
+      stage_visual = vim.fn.maparg("<Plug>GitHunksStageHunk", "x", false, true).desc,
       reset_normal = vim.fn.maparg("<Plug>GitHunksResetHunk", "n", false, true).desc,
       reset_visual = vim.fn.maparg("<Plug>GitHunksResetHunk", "x", false, true).desc,
       reset_file = vim.fn.maparg("<Plug>GitHunksResetFile", "n", false, true).desc,
@@ -306,6 +308,8 @@ T["setup"]["creates global keymaps"] = function()
   eq(descriptions, {
     next = "Navigate to the next hunk",
     prev = "Navigate to the prev hunk",
+    stage_normal = "Stage the hunk on the current line",
+    stage_visual = "Stage the visually selected hunk",
     reset_normal = "Reset the hunk on the current line",
     reset_visual = "Reset the visually selected hunk",
     reset_file = "Reset the entire file",
@@ -438,6 +442,52 @@ kappa
 -gamma
 +BETA
 +GAMMA
+
+]],
+  })
+end
+
+T["stage hunk"]["stages hunks intersecting a visual selection"] = function()
+  local old_content = [[alpha
+beta
+gamma
+delta
+epsilon
+zeta
+eta
+theta
+iota
+kappa
+]]
+  local new_lines =
+    { "alpha", "BETA", "GAMMA", "delta", "epsilon", "zeta", "eta", "theta", "IOTA", "KAPPA" }
+  mock_read_index_file(old_content)
+  set_worktree_buffer("nested/test.txt", new_lines)
+  trigger_diff_update()
+  expect_hunks(child.api.nvim_get_current_buf())
+  child.api.nvim_win_set_cursor(0, { 9, 0 })
+
+  child.type_keys("V", "j", "<Plug>GitHunksStageHunk")
+  local stage_call = child.lua_func(function()
+    vim.wait(1000, function()
+      return rawget(_G, "staged_patch") ~= nil
+    end)
+    return {
+      command = rawget(_G, "staged_command"),
+      stdin = rawget(_G, "staged_patch"),
+    }
+  end)
+
+  eq(stage_call, {
+    command = { "git", "apply", "--cached", "--unidiff-zero", "-" },
+    stdin = [[diff --git a/nested/test.txt b/nested/test.txt
+--- a/nested/test.txt
++++ b/nested/test.txt
+@@ -9,2 +9,2 @@
+-iota
+-kappa
++IOTA
++KAPPA
 
 ]],
   })

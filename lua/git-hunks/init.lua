@@ -461,7 +461,7 @@ local function get_matching_hunks(opts)
 end
 
 --- @param opts GetMatchingHunksOpts
-local function reset_hunk(opts)
+local function reset_hunks(opts)
   local matching_hunks = get_matching_hunks(opts)
 
   for _, matching_hunk in ipairs(tbl_reverse(matching_hunks)) do
@@ -492,7 +492,7 @@ local function reset_hunk(opts)
 end
 
 --- @param opts GetMatchingHunksOpts
-local stage_hunk = cb_async(function(opts)
+local stage_hunks = cb_async(function(opts)
   local bufname = vim.api.nvim_buf_get_name(opts.curr_bufnr)
   local git_root = vim.async.await(get_git_root()) --[[@as string?]]
   ensure_main_loop()
@@ -698,13 +698,30 @@ local setup_global_keymaps = function()
     end
 
     local row_1i = vim.api.nvim_win_get_cursor(0)[1]
-    stage_hunk {
+    stage_hunks {
       state = buf_state,
       curr_bufnr = curr_bufnr,
       start_line_1i = row_1i,
       end_line_1i_incl = row_1i,
     }
   end, { desc = "Stage the hunk on the current line" })
+
+  vim.keymap.set("v", "<Plug>GitHunksStageHunk", function()
+    local curr_bufnr = vim.api.nvim_get_current_buf()
+    local buf_state = buffer_state[curr_bufnr]
+    if buf_state == nil then
+      return notify(vim.log.levels.ERROR, "Missing diff state for this buffer")
+    end
+
+    local start_selection_1i, end_selection_1i_incl =
+      get_visual_selection_range(vim.fn.line "v", vim.fn.line ".")
+    stage_hunks {
+      state = buf_state,
+      curr_bufnr = curr_bufnr,
+      start_line_1i = start_selection_1i,
+      end_line_1i_incl = end_selection_1i_incl,
+    }
+  end, { desc = "Stage the visually selected hunk" })
 
   vim.keymap.set("n", "<Plug>GitHunksResetHunk", function()
     local curr_bufnr = vim.api.nvim_get_current_buf()
@@ -714,7 +731,7 @@ local setup_global_keymaps = function()
     end
 
     local row_1i = vim.api.nvim_win_get_cursor(0)[1]
-    reset_hunk {
+    reset_hunks {
       state = buf_state,
       curr_bufnr = curr_bufnr,
       start_line_1i = row_1i,
@@ -732,7 +749,7 @@ local setup_global_keymaps = function()
     local start_selection_1i, end_selection_1i_incl =
       get_visual_selection_range(vim.fn.line "v", vim.fn.line ".")
 
-    reset_hunk {
+    reset_hunks {
       state = buf_state,
       curr_bufnr = curr_bufnr,
       start_line_1i = start_selection_1i,
@@ -747,7 +764,7 @@ local setup_global_keymaps = function()
       return notify(vim.log.levels.ERROR, "Missing diff state for this buffer")
     end
 
-    reset_hunk {
+    reset_hunks {
       state = buf_state,
       curr_bufnr = curr_bufnr,
       start_line_1i = 1,
