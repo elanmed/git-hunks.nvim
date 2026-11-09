@@ -192,7 +192,7 @@ end
 
 --- @class DiffState
 --- @field unpacked_hunks UnpackedHunk[]
---- @field unified string
+--- @field unified_hunks string[]
 --- @field index_lines string[]
 
 --- @type table<number, DiffState>
@@ -258,9 +258,29 @@ local update_state_for_buf = function(bufnr)
       table.insert(unpacked_hunks, M.unpack_hunk(raw_hunk))
     end
 
+    local unified_hunks = {}
+    local curr_hunk_lines = {}
+    local unified_lines = vim.split(diff.unified, "\n", { plain = true, trim_empty = true })
+    for _, line in ipairs(unified_lines) do
+      if line:match "^@@ " then
+        if #curr_hunk_lines > 0 then
+          local curr_hunk = table.concat(curr_hunk_lines, "\n") .. "\n"
+          table.insert(unified_hunks, curr_hunk)
+        end
+        curr_hunk_lines = {}
+      end
+
+      table.insert(curr_hunk_lines, line)
+    end
+
+    if #curr_hunk_lines > 0 then
+      local curr_hunk = table.concat(curr_hunk_lines, "\n") .. "\n"
+      table.insert(unified_hunks, curr_hunk)
+    end
+
     buffer_state[bufnr] = {
       unpacked_hunks = unpacked_hunks,
-      unified = diff.unified,
+      unified = unified_hunks,
       index_lines = index_lines,
     }
   end)
