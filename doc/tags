@@ -2,6 +2,7 @@ git-hunks-<plug>githunksnexthunk	git-hunks.txt	/*git-hunks-<plug>githunksnexthun
 git-hunks-<plug>githunksprevhunk	git-hunks.txt	/*git-hunks-<plug>githunksprevhunk*
 git-hunks-<plug>githunksresetfile	git-hunks.txt	/*git-hunks-<plug>githunksresetfile*
 git-hunks-<plug>githunksresethunk	git-hunks.txt	/*git-hunks-<plug>githunksresethunk*
+git-hunks-<plug>githunksstagehunk	git-hunks.txt	/*git-hunks-<plug>githunksstagehunk*
 git-hunks-api	git-hunks.txt	/*git-hunks-api*
 git-hunks-autocommand-events	git-hunks.txt	/*git-hunks-autocommand-events*
 git-hunks-example-config	git-hunks.txt	/*git-hunks-example-config*
