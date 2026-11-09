@@ -316,7 +316,7 @@ local update_state_for_buf = function(bufnr)
   end)
 end
 
-local update_signs = vim.schedule_wrap(function()
+local update_signs = function()
   local curr_bufnr = vim.api.nvim_get_current_buf()
   local buf_state = buffer_state[curr_bufnr]
 
@@ -358,7 +358,7 @@ local update_signs = vim.schedule_wrap(function()
       number_hl_group = row_to_hl.hl,
     })
   end
-end)
+end
 
 --- @param hunk IndicesHunkUnpacked
 --- @return integer
@@ -524,7 +524,17 @@ local stage_hunk = cb_async(function(opts)
     table.concat(matching_unified_hunks, "\n") .. "\n"
   )
 
-  vim.print("patch", patch)
+  local out = system_async({ "git", "apply", "--cached", "--unidiff-zero", "-" }, { stdin = patch })
+  if out.code ~= 0 then
+    local err = vim.trim(out.stderr)
+    if err == "" then
+      err = "unknown error"
+    end
+    return notify(vim.log.levels.ERROR, "Failed to stage hunk: %s", err)
+  end
+
+  ensure_main_loop()
+  update_signs()
 end)
 
 local setup_highlights = function()
@@ -559,6 +569,7 @@ local setup_global_autocmds = function()
             return
           end
           vim.async.await(update_state_for_buf(event.buf))
+          ensure_main_loop()
           update_signs()
         end)
       )
@@ -572,6 +583,7 @@ local setup_global_autocmds = function()
         return
       end
       vim.async.await(update_state_for_buf(event.buf))
+      ensure_main_loop()
       update_signs()
     end),
   })
@@ -601,6 +613,7 @@ local setup_global_autocmds = function()
           vim.async.await(update_state_for_buf(bufnr))
         end,
       }
+      ensure_main_loop()
       update_signs()
     end),
   })

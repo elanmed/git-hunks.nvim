@@ -199,6 +199,51 @@ local function trigger_diff_update()
   child.cmd "doautocmd BufEnter"
 end
 
+--- @class MockSystemResponse
+--- @field code? integer
+--- @field stdout? string
+--- @field stderr? string
+--- @param responses table<string, MockSystemResponse>
+local function mock_system_responses(responses)
+  child.lua_func(function(responses_arg)
+    local system_responses = rawget(_G, "git_system_responses")
+    for command, response in pairs(responses_arg) do
+      system_responses[command] = response
+    end
+  end, responses)
+end
+
+local function setup_mock_system()
+  child.lua_func(function()
+    local cwd = vim.fn.getcwd()
+    rawset(_G, "git_system_responses", {
+      ["git rev-parse --show-toplevel"] = { stdout = cwd .. "\n" },
+      ["git rev-parse --absolute-git-dir"] = { stdout = cwd .. "/.git\n" },
+    })
+    --- @type fun(command: string[], opts: vim.SystemOpts?, on_exit: fun(result: vim.SystemCompleted)): nil
+    local system_mock = function(command, opts, on_exit)
+      local command_string = table.concat(command, " ")
+      local responses = rawget(_G, "git_system_responses")
+      local response = responses[command_string]
+      local result = {
+        cmd = command,
+        code = response and response.code or 0,
+        signal = 0,
+        stdout = response and response.stdout or "",
+        stderr = response and response.stderr or "",
+      }
+      if command_string == "git apply --cached --unidiff-zero -" then
+        rawset(_G, "staged_command", command)
+        rawset(_G, "staged_patch", opts and opts.stdin)
+      end
+      vim.schedule(function()
+        on_exit(result)
+      end)
+    end
+    vim.system = system_mock --[[@as any]]
+  end)
+end
+
 local function stage_hunk_and_capture_error()
   return child.lua_func(function()
     rawset(vim, "notify", function(message, level)
@@ -229,11 +274,13 @@ local T = new_set {
   hooks = {
     pre_case = function()
       child.restart {
+        "--noplugin",
         "--cmd",
         [[lua rawset(_G, "GIT_HUNKS_TEST", true)]],
         "-u",
         "scripts/minimal_init.lua",
       }
+      setup_mock_system()
       child.lua_func(function()
         M = require "git-hunks"
         M.setup()
@@ -289,7 +336,8 @@ T["setup"]["creates global autocommands"] = function()
 end
 
 T["setup"]["creates one watcher, dispatches Git events, and closes it on exit"] = function()
-  child.restart { "-u", "scripts/minimal_init.lua" }
+  child.restart { "--noplugin", "-u", "scripts/minimal_init.lua" }
+  setup_mock_system()
   child.lua_func(function()
     M = require "git-hunks"
     vim.api.nvim_exec_autocmds("VimLeavePre", {})
@@ -349,65 +397,88 @@ end
 
 T["stage hunk"] = new_set()
 
-T["stage hunk"]["creates a patch with paths relative to the Git root"] = function()
-  mock_read_index_file "old\n"
-  set_worktree_buffer("nested/test.txt", { "new" })
+T["stage hunk"]["stages the entire selected hunk"] = function()
+  local old_content = [[alpha
+beta
+gamma
+delta
+epsilon
+zeta
+eta
+theta
+iota
+kappa
+]]
+  local new_lines =
+    { "alpha", "BETA", "GAMMA", "delta", "epsilon", "zeta", "eta", "theta", "IOTA", "KAPPA" }
+  mock_read_index_file(old_content)
+  set_worktree_buffer("nested/test.txt", new_lines)
   trigger_diff_update()
   expect_hunks(child.api.nvim_get_current_buf())
+  child.api.nvim_win_set_cursor(0, { 2, 0 })
 
-  local patch = child.lua_func(function()
-    rawset(vim, "print", function(_, value)
-      _G.staged_patch = value
-    end)
-    local stage_mapping = vim.fn.maparg("<Plug>GitHunksStageHunk", "n", false, true)
-    stage_mapping.callback()
+  local stage_call = child.lua_func(function()
+    vim.fn.maparg("<Plug>GitHunksStageHunk", "n", false, true).callback()
     vim.wait(1000, function()
-      return _G.staged_patch ~= nil
+      return rawget(_G, "staged_patch") ~= nil
     end)
-    return _G.staged_patch
+    return {
+      command = rawget(_G, "staged_command"),
+      stdin = rawget(_G, "staged_patch"),
+    }
   end)
 
-  eq(
-    patch,
-    [[diff --git a/nested/test.txt b/nested/test.txt
+  eq(stage_call, {
+    command = { "git", "apply", "--cached", "--unidiff-zero", "-" },
+    stdin = [[diff --git a/nested/test.txt b/nested/test.txt
 --- a/nested/test.txt
 +++ b/nested/test.txt
-@@ -1 +1 @@
--old
-+new
+@@ -2,2 +2,2 @@
+-beta
+-gamma
++BETA
++GAMMA
 
+]],
+  })
+end
+
+T["stage hunk"]["reports Git errors when the patch cannot be applied"] = function()
+  mock_read_index_file [[old
 ]]
+  set_worktree_buffer("test.txt", { "new" })
+  trigger_diff_update()
+  expect_hunks(child.api.nvim_get_current_buf())
+  mock_system_responses {
+    ["git apply --cached --unidiff-zero -"] = {
+      code = 1,
+      stderr = [[error: patch does not apply
+]],
+    },
+  }
+
+  eq(
+    stage_hunk_and_capture_error(),
+    { "[git-hunks.nvim]: Failed to stage hunk: error: patch does not apply", true }
   )
 end
 
 T["stage hunk"]["reports when it cannot find a Git root"] = function()
-  mock_read_index_file "old\n"
+  mock_read_index_file [[old
+]]
   set_worktree_buffer("test.txt", { "new" })
   trigger_diff_update()
   expect_hunks(child.api.nvim_get_current_buf())
+  mock_system_responses {
+    ["git rev-parse --show-toplevel"] = { code = 128, stderr = "not a repository" },
+  }
 
-  local stage_error = child.lua_func(function()
-    local cwd = vim.fn.getcwd()
-    local non_git_dir = vim.fn.tempname()
-    vim.fn.mkdir(non_git_dir, "p")
-    vim.fn.chdir(non_git_dir)
-    rawset(vim, "notify", function(message, level)
-      _G.stage_error = { message, level == vim.log.levels.ERROR }
-    end)
-    vim.fn.maparg("<Plug>GitHunksStageHunk", "n", false, true).callback()
-    vim.wait(1000, function()
-      return _G.stage_error ~= nil
-    end)
-    vim.fn.chdir(cwd)
-    vim.fn.delete(non_git_dir, "rf")
-    return _G.stage_error
-  end)
-
-  eq(stage_error, { "[git-hunks.nvim]: Failed to get Git root", true })
+  eq(stage_hunk_and_capture_error(), { "[git-hunks.nvim]: Failed to get Git root", true })
 end
 
 T["stage hunk"]["reports when the buffer is outside the Git root"] = function()
-  mock_read_index_file "old\n"
+  mock_read_index_file [[old
+]]
   set_worktree_buffer("test.txt", { "new" })
   trigger_diff_update()
   expect_hunks(child.api.nvim_get_current_buf())
