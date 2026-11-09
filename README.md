@@ -1,6 +1,6 @@
 # `git-hunks.nvim`
 
-A minimal plugin to view, navigate, and reset git hunks. Also includes a diff view for comparing any two git file locations.
+A minimal plugin to view, navigate, stage, and reset Git hunks. Also includes a diff view for comparing any two Git file locations.
 
 ## Features
 
@@ -9,6 +9,7 @@ A minimal plugin to view, navigate, and reset git hunks. Also includes a diff vi
 - Signs update on every edit with debouncing (300ms)
 - Watches `.git/index` and `.git/HEAD` for external changes (e.g. `git checkout`, `git stash`, `git reset`)
 - Navigate to next/previous hunk with wrapping
+- Stage hunks on the current line or overlapping a visual selection
 - Reset a single hunk, a visual selection of hunks, or the entire file
 
 ## Example config
@@ -16,6 +17,9 @@ A minimal plugin to view, navigate, and reset git hunks. Also includes a diff vi
 ```lua
 vim.keymap.set("n", "]h", "<Plug>GitHunksNextHunk")
 vim.keymap.set("n", "[h", "<Plug>GitHunksPrevHunk")
+
+vim.keymap.set("n", "ga", "<Plug>GitHunksStageHunk")
+vim.keymap.set("v", "ga", "<Plug>GitHunksStageHunk")
 
 vim.keymap.set("n", "gh", "<Plug>GitHunksResetHunk")
 vim.keymap.set("v", "gh", "<Plug>GitHunksResetHunk")
@@ -31,6 +35,11 @@ Navigate to the next hunk. Wraps to the first hunk if none remain.
 ### `<Plug>GitHunksPrevHunk`
 
 Navigate to the previous hunk. Wraps to the last hunk if none remain.
+
+### `<Plug>GitHunksStageHunk`
+
+- In normal mode: stage the hunk on the current line to the Git index
+- In visual mode: stage all hunks that overlap with the visual selection
 
 ### `<Plug>GitHunksResetHunk`
 
@@ -78,11 +87,11 @@ Reset the entire file to the index version.
 --- @class ChangeHunk : HunkOldRange, HunkNewRange
 --- @field kind "change"
 
---- @alias UnpackedHunk InsertionHunk | DeletionHunk | ChangeHunk
+--- @alias IndicesHunkUnpacked InsertionHunk | DeletionHunk | ChangeHunk
 
---- @alias DiffHunk { [1]: integer, [2]: integer, [3]: integer, [4]: integer }
---- @param hunk DiffHunk
---- @return UnpackedHunk
+--- @alias IndicesHunk { [1]: integer, [2]: integer, [3]: integer, [4]: integer }
+--- @param hunk IndicesHunk
+--- @return IndicesHunkUnpacked
 M.unpack_indices_hunk = function(hunk)
 -- ...
 end
