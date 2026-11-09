@@ -169,7 +169,7 @@ end
 --- @field rel_filename string
 --- @field file_bufnr number
 
---- @type fun(opts: GenerateDiffParams): vim.async.Task<DiffHunk[]?>
+--- @type fun(opts: GenerateDiffParams): vim.async.Task<{indices: DiffHunk[], unified: string}?>
 local generate_diff = function(opts)
   --- @return DiffHunk[]?
   return vim.async.run(function()
@@ -184,12 +184,15 @@ local generate_diff = function(opts)
     end
     local new_lines = vim.api.nvim_buf_get_lines(opts.file_bufnr, 0, -1, false)
     local new_str = table.concat(new_lines, "\n"):gsub("\n$", "") .. "\n"
-    return vim.text.diff(old_str, new_str, { result_type = "indices" }) --[[@as DiffHunk[]?]]
+    local indices = vim.text.diff(old_str, new_str, { result_type = "indices" }) --[[@as DiffHunk[]?]]
+    local unified = vim.text.diff(old_str, new_str, { result_type = "unified" }) --[[@as string]]
+    return { indices = indices, unified = unified }
   end)
 end
 
 --- @class DiffState
 --- @field indices DiffHunk[]
+--- @field unified string
 --- @field index_lines string[]
 
 --- @type table<number, DiffState>
@@ -228,14 +231,14 @@ local update_state_for_buf = function(bufnr)
       return
     end
 
-    local indices = vim.async.await(generate_diff {
+    local diff = vim.async.await(generate_diff {
       rel_filename = bufname,
       file_bufnr = bufnr,
     })
     if buffer_update_id[bufnr] ~= update_id then
       return
     end
-    if indices == nil then
+    if diff == nil then
       clear_state_for_buf(bufnr, update_id)
       return
     end
@@ -251,7 +254,8 @@ local update_state_for_buf = function(bufnr)
     local index_lines = vim.split(index_str:gsub("\n$", "") .. "\n", "\n", { trimempty = true })
 
     buffer_state[bufnr] = {
-      indices = indices,
+      indices = diff.indices,
+      unified = diff.unified,
       index_lines = index_lines,
     }
   end)
