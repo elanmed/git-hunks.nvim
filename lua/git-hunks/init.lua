@@ -171,7 +171,7 @@ end
 
 --- @type fun(opts: GenerateDiffParams): vim.async.Task<{indices: DiffHunk[], unified: string}?>
 local generate_diff = function(opts)
-  --- @return DiffHunk[]?
+  --- @return {indices: DiffHunk[], unified: string}?
   return vim.async.run(function()
     local old_str = vim.async.await(M.read_index_file(opts.rel_filename)) --[[@as string?]]
     if old_str == nil then
@@ -234,7 +234,7 @@ local update_state_for_buf = function(bufnr)
     local diff = vim.async.await(generate_diff {
       rel_filename = bufname,
       file_bufnr = bufnr,
-    })
+    }) --[[@as {indices: DiffHunk[], unified: string}?]]
     if buffer_update_id[bufnr] ~= update_id then
       return
     end
