@@ -192,6 +192,21 @@ local vim_system_stdout = function(cmd, opts)
   end)
 end
 
+--- @return vim.async.Task<string?>
+local get_git_root = function()
+  return vim.async.run(
+    --- @return string?
+    function()
+      local git_root = vim.async.await(vim_system_stdout { "git", "rev-parse", "--show-toplevel" }) --[[@as string?]]
+      if git_root == nil then
+        return nil
+      end
+
+      return vim.trim(git_root)
+    end
+  )
+end
+
 --- @param rel_filename string
 --- @return vim.async.Task<string?>
 M.read_index_file = function(rel_filename)
@@ -451,7 +466,7 @@ local function reset_hunk(opts)
 
   for _, matching_hunk in ipairs(tbl_reverse(matching_hunks)) do
     --- @type IndicesHunkUnpacked
-    local hunk = matching_hunk.hunk
+    local hunk = matching_hunk.indices_hunk_unpacked
     local head_chunk = hunk.kind == "insertion" and {}
       or vim.list_slice(opts.state.index_lines, hunk.start_old_1i, hunk.end_old_1i_incl)
 
@@ -477,34 +492,40 @@ local function reset_hunk(opts)
 end
 
 --- @param opts GetMatchingHunksOpts
-local function stage_hunk(opts)
+local stage_hunk = cb_async(function(opts)
   local bufname = vim.api.nvim_buf_get_name(opts.curr_bufnr)
+  local git_root = vim.async.await(get_git_root()) --[[@as string?]]
+  ensure_main_loop()
+  if git_root == nil then
+    return notify(vim.log.levels.ERROR, "Failed to get Git root")
+  end
+
+  local rel_filename = vim.fs.relpath(git_root, bufname)
+  if rel_filename == nil then
+    return notify(vim.log.levels.ERROR, "File is not inside the Git root")
+  end
+
   local matching_hunks = get_matching_hunks(opts)
 
-  local matching_unified_hunks = vim
-    .iter(matching_hunks)
-    :map(
-      --- @param matching_hunk MatchingHunk
-      function(matching_hunk)
-        return matching_hunk.unified_hunk
-      end
-    )
-    :totable()
+  local matching_unified_hunks = {}
+  for _, matching_hunk in ipairs(matching_hunks) do
+    table.insert(matching_unified_hunks, matching_hunk.unified_hunk)
+  end
 
   local patch = string.format(
     [[diff --git a/%s b/%s
 --- a/%s
 +++ b/%s
---- %s]],
-    bufname,
-    bufname,
-    bufname,
-    bufname,
+%s]],
+    rel_filename,
+    rel_filename,
+    rel_filename,
+    rel_filename,
     table.concat(matching_unified_hunks, "\n") .. "\n"
   )
 
   vim.print("patch", patch)
-end
+end)
 
 local setup_highlights = function()
   local set_default_highlights = function()

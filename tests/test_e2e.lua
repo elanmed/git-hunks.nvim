@@ -199,6 +199,19 @@ local function trigger_diff_update()
   child.cmd "doautocmd BufEnter"
 end
 
+local function stage_hunk_and_capture_error()
+  return child.lua_func(function()
+    rawset(vim, "notify", function(message, level)
+      _G.stage_error = { message, level == vim.log.levels.ERROR }
+    end)
+    vim.fn.maparg("<Plug>GitHunksStageHunk", "n", false, true).callback()
+    vim.wait(1000, function()
+      return _G.stage_error ~= nil
+    end)
+    return _G.stage_error
+  end)
+end
+
 --- @param index_content string
 --- @param worktree_lines string[]
 --- @return integer
@@ -332,6 +345,75 @@ T["setup"]["creates one watcher, dispatches Git events, and closes it on exit"] 
     end),
     { 1, true }
   )
+end
+
+T["stage hunk"] = new_set()
+
+T["stage hunk"]["creates a patch with paths relative to the Git root"] = function()
+  mock_read_index_file "old\n"
+  set_worktree_buffer("nested/test.txt", { "new" })
+  trigger_diff_update()
+  expect_hunks(child.api.nvim_get_current_buf())
+
+  local patch = child.lua_func(function()
+    rawset(vim, "print", function(_, value)
+      _G.staged_patch = value
+    end)
+    local stage_mapping = vim.fn.maparg("<Plug>GitHunksStageHunk", "n", false, true)
+    stage_mapping.callback()
+    vim.wait(1000, function()
+      return _G.staged_patch ~= nil
+    end)
+    return _G.staged_patch
+  end)
+
+  eq(
+    patch,
+    [[diff --git a/nested/test.txt b/nested/test.txt
+--- a/nested/test.txt
++++ b/nested/test.txt
+@@ -1 +1 @@
+-old
++new
+
+]]
+  )
+end
+
+T["stage hunk"]["reports when it cannot find a Git root"] = function()
+  mock_read_index_file "old\n"
+  set_worktree_buffer("test.txt", { "new" })
+  trigger_diff_update()
+  expect_hunks(child.api.nvim_get_current_buf())
+
+  local stage_error = child.lua_func(function()
+    local cwd = vim.fn.getcwd()
+    local non_git_dir = vim.fn.tempname()
+    vim.fn.mkdir(non_git_dir, "p")
+    vim.fn.chdir(non_git_dir)
+    rawset(vim, "notify", function(message, level)
+      _G.stage_error = { message, level == vim.log.levels.ERROR }
+    end)
+    vim.fn.maparg("<Plug>GitHunksStageHunk", "n", false, true).callback()
+    vim.wait(1000, function()
+      return _G.stage_error ~= nil
+    end)
+    vim.fn.chdir(cwd)
+    vim.fn.delete(non_git_dir, "rf")
+    return _G.stage_error
+  end)
+
+  eq(stage_error, { "[git-hunks.nvim]: Failed to get Git root", true })
+end
+
+T["stage hunk"]["reports when the buffer is outside the Git root"] = function()
+  mock_read_index_file "old\n"
+  set_worktree_buffer("test.txt", { "new" })
+  trigger_diff_update()
+  expect_hunks(child.api.nvim_get_current_buf())
+  child.api.nvim_buf_set_name(0, child.fn.tempname())
+
+  eq(stage_hunk_and_capture_error(), { "[git-hunks.nvim]: File is not inside the Git root", true })
 end
 
 T["unpack indices hunk"] = new_set()
