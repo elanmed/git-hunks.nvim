@@ -215,7 +215,12 @@ end
 local T = new_set {
   hooks = {
     pre_case = function()
-      child.restart { "-u", "scripts/minimal_init.lua" }
+      child.restart {
+        "--cmd",
+        [[lua rawset(_G, "GIT_DIFFS_TEST", true)]],
+        "-u",
+        "scripts/minimal_init.lua",
+      }
       child.lua_func(function()
         M = require "git-hunks"
         M.setup()
@@ -329,13 +334,13 @@ T["setup"]["creates one watcher, dispatches Git events, and closes it on exit"] 
   )
 end
 
-T["unpack hunk"] = new_set()
+T["unpack indices hunk"] = new_set()
 
-T["unpack hunk"]["returns variant-specific ranges and boundary positions"] = function()
+T["unpack indices hunk"]["returns variant-specific ranges and boundary positions"] = function()
   local hunks = child.lua_func(function()
-    local insertion = M.unpack_hunk { 0, 0, 1, 1 }
-    local deletion = M.unpack_hunk { 1, 1, 0, 0 }
-    local change = M.unpack_hunk { 1, 1, 1, 1 }
+    local insertion = M.unpack_indices_hunk { 0, 0, 1, 1 }
+    local deletion = M.unpack_indices_hunk { 1, 1, 0, 0 }
+    local change = M.unpack_indices_hunk { 1, 1, 1, 1 }
     return {
       insertion = {
         kind = insertion.kind,
@@ -390,6 +395,73 @@ T["unpack hunk"]["returns variant-specific ranges and boundary positions"] = fun
       is_leading = false,
     },
   })
+end
+
+T["split unified hunks"] = new_set()
+
+T["split unified hunks"]["keeps a single hunk intact"] = function()
+  local hunks = child.lua_func(function()
+    return M._internal.split_unified_hunks [[@@ -2,4 +2,4 @@
+ context before
+-old line
++new line
+ context after
+]]
+  end)
+
+  eq(hunks, {
+    [[@@ -2,4 +2,4 @@
+ context before
+-old line
++new line
+ context after
+]],
+  })
+end
+
+T["split unified hunks"]["separates multiple hunks without dropping their lines"] = function()
+  local hunks = child.lua_func(function()
+    return M._internal.split_unified_hunks [[@@ -1,2 +1,2 @@
+ first
+-old
++new
+@@ -8 +8 @@
+-before
++after
+@@ -20,2 +20,3 @@
+ context
+-removed
++added
++@@ content, not a hunk header
+]]
+  end)
+
+  eq(hunks, {
+    [[@@ -1,2 +1,2 @@
+ first
+-old
++new
+]],
+    [[@@ -8 +8 @@
+-before
++after
+]],
+    [[@@ -20,2 +20,3 @@
+ context
+-removed
++added
++@@ content, not a hunk header
+]],
+  })
+end
+
+T["split unified hunks"]["returns no hunks for empty input"] = function()
+  eq(
+    child.lua_func(function()
+      return M._internal.split_unified_hunks ""
+    end),
+    {}
+  )
 end
 
 T["hunk navigation"] = new_set()

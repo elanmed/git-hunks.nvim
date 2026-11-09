@@ -45,6 +45,32 @@ local tbl_reverse = function(input)
   return reversed
 end
 
+--- @param unified string
+--- @return string[]
+local split_unified_hunks = function(unified)
+  local unified_hunks = {}
+  local curr_hunk_lines = {}
+  local unified_lines = vim.split(unified, "\n", { plain = true, trimempty = true })
+  for _, line in ipairs(unified_lines) do
+    if line:match "^@@ " then
+      if #curr_hunk_lines > 0 then
+        local curr_hunk = table.concat(curr_hunk_lines, "\n") .. "\n"
+        table.insert(unified_hunks, curr_hunk)
+      end
+      curr_hunk_lines = {}
+    end
+
+    table.insert(curr_hunk_lines, line)
+  end
+
+  if #curr_hunk_lines > 0 then
+    local curr_hunk = table.concat(curr_hunk_lines, "\n") .. "\n"
+    table.insert(unified_hunks, curr_hunk)
+  end
+
+  return unified_hunks
+end
+
 -- ====================
 -- Diff
 -- ====================
@@ -86,7 +112,7 @@ end
 --- @alias DiffHunk { [1]: integer, [2]: integer, [3]: integer, [4]: integer }
 --- @param hunk DiffHunk
 --- @return UnpackedHunk
-M.unpack_hunk = function(hunk)
+M.unpack_indices_hunk = function(hunk)
   local start_old_1i, count_old, start_new_1i, count_new = unpack(hunk)
 
   local kind = (function()
@@ -255,32 +281,14 @@ local update_state_for_buf = function(bufnr)
 
     local unpacked_hunks = {}
     for _, raw_hunk in ipairs(diff.indices) do
-      table.insert(unpacked_hunks, M.unpack_hunk(raw_hunk))
+      table.insert(unpacked_hunks, M.unpack_indices_hunk(raw_hunk))
     end
 
-    local unified_hunks = {}
-    local curr_hunk_lines = {}
-    local unified_lines = vim.split(diff.unified, "\n", { plain = true, trim_empty = true })
-    for _, line in ipairs(unified_lines) do
-      if line:match "^@@ " then
-        if #curr_hunk_lines > 0 then
-          local curr_hunk = table.concat(curr_hunk_lines, "\n") .. "\n"
-          table.insert(unified_hunks, curr_hunk)
-        end
-        curr_hunk_lines = {}
-      end
-
-      table.insert(curr_hunk_lines, line)
-    end
-
-    if #curr_hunk_lines > 0 then
-      local curr_hunk = table.concat(curr_hunk_lines, "\n") .. "\n"
-      table.insert(unified_hunks, curr_hunk)
-    end
+    local unified_hunks = split_unified_hunks(diff.unified)
 
     buffer_state[bufnr] = {
       unpacked_hunks = unpacked_hunks,
-      unified = unified_hunks,
+      unified_hunks = unified_hunks,
       index_lines = index_lines,
     }
   end)
@@ -665,6 +673,12 @@ M.setup = function()
   setup_global_autocmds()
   setup_file_watcher()
   setup_global_keymaps()
+end
+
+if rawget(_G, "GIT_DIFFS_TEST") then
+  M._internal = {
+    split_unified_hunks = split_unified_hunks,
+  }
 end
 
 return M
