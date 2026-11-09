@@ -408,7 +408,7 @@ local function navigate_hunk(direction)
 end
 
 --- @class MatchingHunk
---- @field unpacked_indices_hunk IndicesHunkUnpacked
+--- @field indices_hunk_unpacked IndicesHunkUnpacked
 --- @field unified_hunk string
 
 --- @class GetMatchingHunksOpts
@@ -416,6 +416,7 @@ end
 --- @field start_line_1i number
 --- @field end_line_1i_incl number
 --- @field curr_bufnr number
+
 --- @param opts GetMatchingHunksOpts
 local function get_matching_hunks(opts)
   --- @type MatchingHunk[]
@@ -432,9 +433,10 @@ local function get_matching_hunks(opts)
 
     if hunk_overlaps_range then
       local unified_hunk = opts.state.unified_hunks[idx]
+
       --- @type MatchingHunk
       local matching_hunk = {
-        unpacked_indices_hunk = unpacked_indices_hunk,
+        indices_hunk_unpacked = hunk,
         unified_hunk = unified_hunk,
       }
       table.insert(matching_hunks, matching_hunk)
@@ -476,13 +478,32 @@ end
 
 --- @param opts GetMatchingHunksOpts
 local function stage_hunk(opts)
+  local bufname = vim.api.nvim_buf_get_name(opts.curr_bufnr)
   local matching_hunks = get_matching_hunks(opts)
 
-  local matching_unified_hunks = {}
-  for _, matching_hunk in ipairs(matching_hunks) do
-    -- concat into a patch
-    -- apply the patch
-  end
+  local matching_unified_hunks = vim
+    .iter(matching_hunks)
+    :map(
+      --- @param matching_hunk MatchingHunk
+      function(matching_hunk)
+        return matching_hunk.unified_hunk
+      end
+    )
+    :totable()
+
+  local patch = string.format(
+    [[diff --git a/%s b/%s
+--- a/%s
++++ b/%s
+--- %s]],
+    bufname,
+    bufname,
+    bufname,
+    bufname,
+    table.concat(matching_unified_hunks, "\n") .. "\n"
+  )
+
+  vim.print("patch", patch)
 end
 
 local setup_highlights = function()
