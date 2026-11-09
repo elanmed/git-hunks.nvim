@@ -43,11 +43,50 @@ Reset the entire file to the index version.
 
 ## API
 
-### `require("git-hunks").setup()`
+### `M.unpack_indices_hunk`
 
-Initializes the plugin. The `plugin/git-hunks.lua` entrypoint calls this automatically when the plugin loads.
+```lua
+--- @class HunkOldRange
+--- @field start_old_1i integer
+--- @field start_old_0i integer
+--- @field count_old integer
+--- @field end_old_1i_excl integer
+--- @field end_old_1i_incl integer
+--- @field end_old_0i_excl integer
+--- @field end_old_0i_incl integer
 
-The module also exposes `unpack_hunk(hunk)`, which converts a `vim.text.diff()` hunk index tuple into insertion, deletion, or change ranges, and `read_index_file(rel_filename)`, which returns a `vim.async.Task<string?>` containing the Git-index file contents or `nil` if it cannot be read. These helpers are for advanced use; normal configuration does not need them.
+--- @class HunkNewRange
+--- @field start_new_1i integer
+--- @field start_new_0i integer
+--- @field count_new integer
+--- @field end_new_1i_excl integer
+--- @field end_new_1i_incl integer
+--- @field end_new_0i_excl integer
+--- @field end_new_0i_incl integer
+
+--- @class InsertionHunk : HunkNewRange
+--- @field kind "insertion"
+--- @field after_old_1i integer
+--- @field is_leading boolean
+
+--- @class DeletionHunk : HunkOldRange
+--- @field kind "deletion"
+--- @field after_new_1i integer
+--- @field after_new_1i_visible integer
+--- @field is_leading boolean
+
+--- @class ChangeHunk : HunkOldRange, HunkNewRange
+--- @field kind "change"
+
+--- @alias UnpackedHunk InsertionHunk | DeletionHunk | ChangeHunk
+
+--- @alias DiffHunk { [1]: integer, [2]: integer, [3]: integer, [4]: integer }
+--- @param hunk DiffHunk
+--- @return UnpackedHunk
+M.unpack_indices_hunk = function(hunk)
+-- ...
+end
+```
 
 ## Highlight groups
 
