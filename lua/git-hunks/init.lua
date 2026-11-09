@@ -45,6 +45,13 @@ local tbl_reverse = function(input)
   return reversed
 end
 
+--- @param start_line_1i integer
+--- @param end_line_1i integer
+--- @return integer, integer
+local get_visual_selection_range = function(start_line_1i, end_line_1i)
+  return math.min(start_line_1i, end_line_1i), math.max(start_line_1i, end_line_1i)
+end
+
 --- @param unified string
 --- @return string[]
 local split_unified_hunks = function(unified)
@@ -639,16 +646,14 @@ local setup_global_keymaps = function()
       return notify(vim.log.levels.ERROR, "Missing diff state for this buffer")
     end
 
-    local start_visual_1i = vim.fn.line "v"
-    local end_visual_1i = vim.fn.line "."
-    local start_selection_1i = math.min(start_visual_1i, end_visual_1i)
-    local end_selection_1i = math.max(start_visual_1i, end_visual_1i)
+    local start_selection_1i, end_selection_1i_incl =
+      get_visual_selection_range(vim.fn.line "v", vim.fn.line ".")
 
     reset_hunk {
       state = buf_state,
       curr_bufnr = curr_bufnr,
       start_line_1i = start_selection_1i,
-      end_line_1i_incl = end_selection_1i,
+      end_line_1i_incl = end_selection_1i_incl,
     }
   end, { desc = "Reset the visually selected hunk" })
 
@@ -675,8 +680,9 @@ M.setup = function()
   setup_global_keymaps()
 end
 
-if rawget(_G, "GIT_DIFFS_TEST") then
+if rawget(_G, "GIT_HUNKS_TEST") then
   M._internal = {
+    get_visual_selection_range = get_visual_selection_range,
     split_unified_hunks = split_unified_hunks,
   }
 end

@@ -217,7 +217,7 @@ local T = new_set {
     pre_case = function()
       child.restart {
         "--cmd",
-        [[lua rawset(_G, "GIT_DIFFS_TEST", true)]],
+        [[lua rawset(_G, "GIT_HUNKS_TEST", true)]],
         "-u",
         "scripts/minimal_init.lua",
       }
@@ -395,6 +395,35 @@ T["unpack indices hunk"]["returns variant-specific ranges and boundary positions
       is_leading = false,
     },
   })
+end
+
+T["visual selection range"] = new_set()
+
+T["visual selection range"]["orders forward selection endpoints"] = function()
+  eq(
+    child.lua_func(function()
+      return { M._internal.get_visual_selection_range(2, 5) }
+    end),
+    { 2, 5 }
+  )
+end
+
+T["visual selection range"]["orders backward selection endpoints"] = function()
+  eq(
+    child.lua_func(function()
+      return { M._internal.get_visual_selection_range(5, 2) }
+    end),
+    { 2, 5 }
+  )
+end
+
+T["visual selection range"]["keeps a single-line selection"] = function()
+  eq(
+    child.lua_func(function()
+      return { M._internal.get_visual_selection_range(3, 3) }
+    end),
+    { 3, 3 }
+  )
 end
 
 T["split unified hunks"] = new_set()
