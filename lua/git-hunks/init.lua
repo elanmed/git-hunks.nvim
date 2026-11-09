@@ -366,13 +366,14 @@ local function navigate_hunk(direction)
   vim.api.nvim_win_set_cursor(0, { next_hunk_row_1i, 0 })
 end
 
---- @class ResetHunkOpts
+--- @class GetMatchingHunksOpts
 --- @field state DiffState
 --- @field start_line_1i number
 --- @field end_line_1i_incl number
 --- @field curr_bufnr number
---- @param opts ResetHunkOpts
-local function reset_hunk(opts)
+--- @param opts GetMatchingHunksOpts
+local function get_matching_hunks(opts)
+  --- @type UnpackedHunk[]
   local matching_hunks = {}
   for _, raw_hunk in ipairs(opts.state.indices) do
     local hunk = M.unpack_hunk(raw_hunk)
@@ -390,6 +391,12 @@ local function reset_hunk(opts)
       table.insert(matching_hunks, hunk)
     end
   end
+  return matching_hunks
+end
+
+--- @param opts GetMatchingHunksOpts
+local function reset_hunk(opts)
+  local matching_hunks = get_matching_hunks(opts)
 
   for _, hunk in ipairs(tbl_reverse(matching_hunks)) do
     local head_chunk = hunk.kind == "insertion" and {}
