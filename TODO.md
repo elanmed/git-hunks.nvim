@@ -24,8 +24,3 @@
 | **index**    | —                      | `git diff --name-only --cached` | `git diff --name-only --cached origin/main` | `git diff --name-only --cached $(git merge-base HEAD origin/main)` |
 | **head**     |                        | —                               | `git diff --name-only HEAD origin/main`     | `git diff --name-only origin/main...HEAD`                          |
 | **upstream** |                        |                                 | —                                           |                                                                    |
-
-- TODO: what would it look like to stage hunks?
-  - Need to create a patch and apply it, can generate a patch from a file
-    - Either generate a patch from the current file, parse the string, and only keep the hunk you want
-    - Or edit the file to only have the hunk you want, then generate a patch, then undo the changes
