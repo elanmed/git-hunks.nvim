@@ -224,6 +224,9 @@ local function setup_mock_system()
     local system_mock = function(command, opts, on_exit)
       local command_string = table.concat(command, " ")
       local responses = rawget(_G, "git_system_responses")
+      local calls = rawget(_G, "git_system_calls") or {}
+      rawset(_G, "git_system_calls", calls)
+      table.insert(calls, command_string)
       local response = responses[command_string]
       local result = {
         cmd = command,
@@ -254,6 +257,23 @@ local function stage_hunk_and_capture_error()
       return _G.stage_error ~= nil
     end)
     return _G.stage_error
+  end)
+end
+
+local function stage_hunk_and_capture_notification()
+  return child.lua_func(function()
+    rawset(_G, "stage_notification", nil)
+    rawset(vim, "notify", function(message, level)
+      _G.stage_notification = { message, level == vim.log.levels.WARN }
+    end)
+    vim.fn.maparg("<Plug>GitHunksStageHunk", "n", false, true).callback()
+    vim.wait(1000, function()
+      return _G.stage_notification ~= nil
+    end)
+    return {
+      notification = _G.stage_notification,
+      staged_patch = rawget(_G, "staged_patch"),
+    }
   end)
 end
 
@@ -493,6 +513,22 @@ kappa
   })
 end
 
+T["stage hunk"]["warns when there is no hunk under the cursor"] = function()
+  prepare_diff(
+    [[alpha
+beta
+gamma
+]],
+    { "alpha", "BETA", "gamma" }
+  )
+  child.api.nvim_win_set_cursor(0, { 1, 0 })
+
+  eq(stage_hunk_and_capture_notification(), {
+    notification = { "[git-hunks.nvim]: No hunks under the cursor", true },
+    staged_patch = nil,
+  })
+end
+
 T["stage hunk"]["reports Git errors when the patch cannot be applied"] = function()
   mock_read_index_file [[old
 ]]
@@ -507,10 +543,10 @@ T["stage hunk"]["reports Git errors when the patch cannot be applied"] = functio
     },
   }
 
-  eq(
-    stage_hunk_and_capture_error(),
-    { "[git-hunks.nvim]: Failed to stage hunk: error: patch does not apply", true }
-  )
+  eq(stage_hunk_and_capture_error(), {
+    "[git-hunks.nvim]: Failed to stage hunk: git apply --cached --unidiff-zero - failed. Error: error: patch does not apply",
+    true,
+  })
 end
 
 T["stage hunk"]["reports when it cannot find a Git root"] = function()
@@ -523,7 +559,50 @@ T["stage hunk"]["reports when it cannot find a Git root"] = function()
     ["git rev-parse --show-toplevel"] = { code = 128, stderr = "not a repository" },
   }
 
-  eq(stage_hunk_and_capture_error(), { "[git-hunks.nvim]: Failed to get Git root", true })
+  eq(
+    stage_hunk_and_capture_error(),
+    { "[git-hunks.nvim]: git rev-parse --show-toplevel failed. Error: not a repository", true }
+  )
+end
+
+T["stage hunk"]["reports when Git returns no error details"] = function()
+  mock_read_index_file [[old
+]]
+  set_worktree_buffer("test.txt", { "new" })
+  trigger_diff_update()
+  expect_hunks(child.api.nvim_get_current_buf())
+  mock_system_responses {
+    ["git rev-parse --show-toplevel"] = { code = 128 },
+  }
+
+  eq(stage_hunk_and_capture_error(), {
+    "[git-hunks.nvim]: git rev-parse --show-toplevel failed. Error: unknown error",
+    true,
+  })
+end
+
+T["stage hunk"]["reports index read errors"] = function()
+  mock_system_responses {
+    ["git show :test.txt"] = { code = 128, stderr = "index unavailable\n" },
+  }
+  set_worktree_buffer("test.txt", { "new" })
+  child.lua_func(function()
+    _G.system_notifications = {}
+    rawset(vim, "notify", function(message, level)
+      table.insert(_G.system_notifications, { message, level == vim.log.levels.ERROR })
+    end)
+  end)
+  trigger_diff_update()
+
+  local notifications = child.lua_func(function()
+    vim.wait(1000, function()
+      return #_G.system_notifications > 0
+    end)
+    return _G.system_notifications
+  end)
+  eq(notifications, {
+    { "[git-hunks.nvim]: git show :test.txt failed. Error: index unavailable", true },
+  })
 end
 
 T["stage hunk"]["reports when the buffer is outside the Git root"] = function()
@@ -840,6 +919,20 @@ line5
 end
 
 T["async state updates"] = new_set()
+
+T["async state updates"]["skips directory buffers"] = function()
+  child.api.nvim_buf_set_name(0, child.fn.getcwd())
+  child.lua_func(function()
+    rawset(_G, "git_system_calls", {})
+  end)
+  trigger_diff_update()
+
+  local calls = child.lua_func(function()
+    vim.wait(100)
+    return _G.git_system_calls
+  end)
+  eq(calls, {})
+end
 
 T["async state updates"]["ignores stale diff results after a newer update"] = function()
   local old_index = "old1\nold2\nold3\n"

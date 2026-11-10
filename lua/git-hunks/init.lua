@@ -204,7 +204,7 @@ local get_git_root = function()
     --- @return string?
     function()
       --- @type { [1]: string?, [2]: string? }
-      local git_root, err = system { "git", "rev-parse", "--show-toplevel" }
+      local git_root, err = vim.async.await(system { "git", "rev-parse", "--show-toplevel" })
       if git_root == nil then
         --- @diagnostic disable-next-line: redundant-return-value
         return nil, err
@@ -231,7 +231,7 @@ local generate_diff = function(opts)
   --- @return {indices: IndicesHunk[], unified: string}?
   return vim.async.run(function()
     --- @type { [1]: string?, [2]: string? }
-    local old_str, err = M.read_index_file(opts.rel_filename)
+    local old_str, err = vim.async.await(M.read_index_file(opts.rel_filename))
     if old_str == nil then
       if err ~= nil then
         notify(vim.log.levels.ERROR, "%s", err)
@@ -287,7 +287,7 @@ local update_state_for_buf = function(bufnr)
       return
     end
     local bufname = vim.fs.relpath(vim.fn.getcwd(), vim.api.nvim_buf_get_name(bufnr))
-    if bufname == nil then
+    if bufname == nil or vim.bo[bufnr].buftype ~= "" or vim.fn.isdirectory(bufname) == 1 then
       clear_state_for_buf(bufnr, update_id)
       return
     end
@@ -508,7 +508,7 @@ end
 local stage_hunks = cb_async(function(opts)
   local bufname = vim.api.nvim_buf_get_name(opts.curr_bufnr)
   --- @type { [1]: string?, [2]: string? }
-  local git_root, git_root_err = get_git_root()
+  local git_root, git_root_err = vim.async.await(get_git_root())
   ensure_main_loop()
   if git_root == nil then
     return notify(vim.log.levels.ERROR, "%s", git_root_err or "Failed to get Git root")
@@ -542,7 +542,9 @@ local stage_hunks = cb_async(function(opts)
   )
 
   --- @type { [1]: string?, [2]: string? }
-  local out, err = system({ "git", "apply", "--cached", "--unidiff-zero", "-" }, { stdin = patch })
+  local out, err = vim.async.await(
+    system({ "git", "apply", "--cached", "--unidiff-zero", "-" }, { stdin = patch })
+  )
   if out == nil then
     return notify(vim.log.levels.ERROR, "Failed to stage hunk: %s", err or "unknown error")
   end
@@ -661,7 +663,7 @@ local setup_file_watcher = cb_async(function()
   file_watcher_setup_pending = true
 
   --- @type { [1]: string?, [2]: string? }
-  local git_dir, git_dir_err = system { "git", "rev-parse", "--absolute-git-dir" }
+  local git_dir, git_dir_err = vim.async.await(system { "git", "rev-parse", "--absolute-git-dir" })
   ensure_main_loop()
   if git_dir == nil then
     file_watcher_setup_pending = false
