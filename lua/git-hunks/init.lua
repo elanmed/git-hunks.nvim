@@ -179,9 +179,9 @@ end
 --- @type fun(cmd: string[], opts: vim.SystemOpts?): vim.SystemCompleted
 local system_async = vim.async.wrap(3, vim.system)
 
---- @type fun(cmd: string[], opts: vim.SystemOpts?): vim.async.Task<string?>
+--- @type fun(cmd: string[], opts: vim.SystemOpts?): vim.async.Task<string?, string?>
 local system = function(cmd, opts)
-  --- @return string?
+  --- @return string?, string?
   return vim.async.run(function()
     local out = system_async(cmd, opts)
     if out.code ~= 0 then
@@ -198,13 +198,12 @@ local system = function(cmd, opts)
   end)
 end
 
---- @return vim.async.Task<string?>
+--- @return vim.async.Task<string?, string?>
 local get_git_root = function()
   return vim.async.run(
-    --- @return string?
+    --- @return string?, string?
     function()
-      --- @type { [1]: string?, [2]: string? }
-      local git_root, err = vim.async.await(system { "git", "rev-parse", "--show-toplevel" })
+      local git_root, err = vim.async.await(system { "git", "rev-parse", "--show-toplevel" }) --[[@as string?, string?]]
       if git_root == nil then
         --- @diagnostic disable-next-line: redundant-return-value
         return nil, err
@@ -217,7 +216,7 @@ local get_git_root = function()
 end
 
 --- @param rel_filename string
---- @return vim.async.Task<string?>
+--- @return vim.async.Task<string?, string?>
 M.read_index_file = function(rel_filename)
   return system { "git", "show", ":" .. rel_filename }
 end
@@ -230,8 +229,7 @@ end
 local generate_diff = function(opts)
   --- @return {indices: IndicesHunk[], unified: string}?
   return vim.async.run(function()
-    --- @type { [1]: string?, [2]: string? }
-    local old_str, err = vim.async.await(M.read_index_file(opts.rel_filename))
+    local old_str, err = vim.async.await(M.read_index_file(opts.rel_filename)) --[[@as string?, string?]]
     if old_str == nil then
       if err ~= nil then
         notify(vim.log.levels.ERROR, "%s", err)
@@ -507,8 +505,7 @@ end
 --- @param opts GetMatchingHunksOpts
 local stage_hunks = cb_async(function(opts)
   local bufname = vim.api.nvim_buf_get_name(opts.curr_bufnr)
-  --- @type { [1]: string?, [2]: string? }
-  local git_root, git_root_err = vim.async.await(get_git_root())
+  local git_root, git_root_err = vim.async.await(get_git_root()) --[[@as string?, string?]]
   ensure_main_loop()
   if git_root == nil then
     return notify(vim.log.levels.ERROR, "%s", git_root_err or "Failed to get Git root")
@@ -541,10 +538,9 @@ local stage_hunks = cb_async(function(opts)
     table.concat(matching_unified_hunks, "\n") .. "\n"
   )
 
-  --- @type { [1]: string?, [2]: string? }
   local out, err = vim.async.await(
     system({ "git", "apply", "--cached", "--unidiff-zero", "-" }, { stdin = patch })
-  )
+  ) --[[@as string?, string?]]
   if out == nil then
     return notify(vim.log.levels.ERROR, "Failed to stage hunk: %s", err or "unknown error")
   end
@@ -662,8 +658,7 @@ local setup_file_watcher = cb_async(function()
   end
   file_watcher_setup_pending = true
 
-  --- @type { [1]: string?, [2]: string? }
-  local git_dir, git_dir_err = vim.async.await(system { "git", "rev-parse", "--absolute-git-dir" })
+  local git_dir, git_dir_err = vim.async.await(system { "git", "rev-parse", "--absolute-git-dir" }) --[[@as string?, string?]]
   ensure_main_loop()
   if git_dir == nil then
     file_watcher_setup_pending = false
