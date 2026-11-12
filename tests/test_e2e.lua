@@ -277,6 +277,26 @@ local function stage_hunk_and_capture_notification()
   end)
 end
 
+local function capture_notifications()
+  child.lua_func(function()
+    rawset(_G, "notifications", {})
+    --- @param message string
+    --- @param level vim.log.levels
+    ---@diagnostic disable-next-line: duplicate-set-field
+    vim.notify = function(message, level)
+      table.insert(_G.notifications, { message, level })
+    end
+  end)
+end
+
+local function get_git_calls(pattern)
+  return child.lua_func(function(pattern_arg)
+    return vim.tbl_filter(function(call)
+      return call:find(pattern_arg, 1, true) == 1
+    end, rawget(_G, "git_system_calls") or {})
+  end, pattern)
+end
+
 --- @param index_content string
 --- @param worktree_lines string[]
 --- @return integer
@@ -583,6 +603,7 @@ end
 
 T["stage hunk"]["reports index read errors"] = function()
   mock_system_responses {
+    ["git ls-files --cached -- test.txt"] = { stdout = "test.txt\n" },
     ["git show :test.txt"] = { code = 128, stderr = "index unavailable\n" },
   }
   set_worktree_buffer("test.txt", { "new" })
@@ -614,6 +635,106 @@ T["stage hunk"]["reports when the buffer is outside the Git root"] = function()
   child.api.nvim_buf_set_name(0, child.fn.tempname())
 
   eq(stage_hunk_and_capture_error(), { "[git-hunks.nvim]: File is not inside the Git root", true })
+end
+
+T["untracked files"] = new_set()
+
+T["untracked files"]["diffs the whole buffer against an empty index entry"] = function()
+  mock_system_responses { ["git ls-files --cached -- test.txt"] = { stdout = "" } }
+  capture_notifications()
+  set_worktree_buffer("test.txt", { "line1", "line2" })
+  trigger_diff_update()
+
+  local bufnr = child.api.nvim_get_current_buf()
+  expect_hunks(bufnr)
+  expect_sign(bufnr, 1, "DiffSignAdd")
+  expect_sign(bufnr, 2, "DiffSignAdd")
+  eq(get_git_calls "git show", {})
+  eq(
+    child.lua_func(function()
+      return _G.notifications
+    end),
+    {}
+  )
+end
+
+T["untracked files"]["ignores reset hunk"] = function()
+  mock_system_responses { ["git ls-files --cached -- test.txt"] = { stdout = "" } }
+  capture_notifications()
+  set_worktree_buffer("test.txt", { "line1", "line2" })
+  trigger_diff_update()
+  expect_hunks(child.api.nvim_get_current_buf())
+  child.api.nvim_win_set_cursor(0, { 1, 0 })
+
+  child.type_keys "<Plug>GitHunksResetHunk"
+
+  expect_lines { "line1", "line2" }
+  eq(
+    child.lua_func(function()
+      return _G.notifications
+    end),
+    { { "[git-hunks.nvim]: Cannot reset hunks of an untracked file", vim.log.levels.WARN } }
+  )
+end
+
+T["untracked files"]["ignores reset file"] = function()
+  mock_system_responses { ["git ls-files --cached -- test.txt"] = { stdout = "" } }
+  capture_notifications()
+  set_worktree_buffer("test.txt", { "line1", "line2" })
+  trigger_diff_update()
+  expect_hunks(child.api.nvim_get_current_buf())
+
+  child.type_keys "<Plug>GitHunksResetFile"
+
+  expect_lines { "line1", "line2" }
+  eq(
+    child.lua_func(function()
+      return _G.notifications
+    end),
+    { { "[git-hunks.nvim]: Cannot reset hunks of an untracked file", vim.log.levels.WARN } }
+  )
+end
+
+T["untracked files"]["reads the index when the file is tracked"] = function()
+  mock_system_responses {
+    ["git ls-files --cached -- test.txt"] = { stdout = "test.txt\n" },
+    ["git show :test.txt"] = { stdout = "line1\nline2\n" },
+  }
+  set_worktree_buffer("test.txt", { "line1", "line2 changed" })
+  trigger_diff_update()
+
+  local bufnr = child.api.nvim_get_current_buf()
+  expect_hunks(bufnr)
+  expect_sign(bufnr, 2, "DiffSignChange")
+  eq(get_git_calls "git show", { "git show :test.txt", "git show :test.txt" })
+end
+
+T["untracked files"]["reports index listing errors and clears the state"] = function()
+  mock_system_responses {
+    ["git ls-files --cached -- test.txt"] = { code = 128, stderr = "fatal: bad revision\n" },
+  }
+  capture_notifications()
+  set_worktree_buffer("test.txt", { "line1" })
+  trigger_diff_update()
+
+  local notifications = child.lua_func(function()
+    vim.wait(1000, function()
+      return #_G.notifications > 0
+    end)
+    return _G.notifications
+  end)
+  eq(notifications, {
+    {
+      "[git-hunks.nvim]: git ls-files --cached -- test.txt failed. Error: fatal: bad revision",
+      vim.log.levels.ERROR,
+    },
+  })
+
+  local bufnr = child.api.nvim_get_current_buf()
+  local ns_id = child.api.nvim_create_namespace "GitHunks"
+  expect_state(function()
+    return #child.api.nvim_buf_get_extmarks(bufnr, ns_id, 0, -1, {}) == 0
+  end)
 end
 
 T["unpack indices hunk"] = new_set()
@@ -1249,6 +1370,7 @@ line5
 end
 
 T["reset file"]["resets an inserted file to empty index content"] = function()
+  mock_system_responses { ["git ls-files --cached -- test.txt"] = { stdout = "test.txt\n" } }
   prepare_diff("", { "inserted" })
 
   child.type_keys "<Plug>GitHunksResetFile"

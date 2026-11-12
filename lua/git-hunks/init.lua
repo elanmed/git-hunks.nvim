@@ -216,9 +216,43 @@ local get_git_root = function()
 end
 
 --- @param rel_filename string
+--- @return vim.async.Task<boolean?>
+M.is_file_untracked = function(rel_filename)
+  return vim.async.run(
+    --- @return boolean?
+    function()
+      local index_paths, index_paths_err =
+        vim.async.await(system { "git", "ls-files", "--cached", "--", rel_filename }) --[[@as string?, string?]]
+      if index_paths_err ~= nil then
+        notify(vim.log.levels.ERROR, "%s", index_paths_err)
+        return nil
+      end
+
+      return index_paths == ""
+    end
+  )
+end
+
+--- @param rel_filename string
 --- @return vim.async.Task<string?, string?>
 M.read_index_file = function(rel_filename)
-  return system { "git", "show", ":" .. rel_filename }
+  return vim.async.run(
+    --- @return string?, string?
+    function()
+      local is_untracked = vim.async.await(M.is_file_untracked(rel_filename)) --[[@as boolean?]]
+      if is_untracked == nil then
+        --- @diagnostic disable-next-line: redundant-return-value
+        return nil
+      end
+      if is_untracked then
+        --- @diagnostic disable-next-line: redundant-return-value
+        return "", nil
+      end
+
+      --- @diagnostic disable-next-line: redundant-return-value
+      return vim.async.await(system { "git", "show", ":" .. rel_filename }) --[[@as string?, string?]]
+    end
+  )
 end
 
 --- @class GenerateDiffParams
@@ -236,7 +270,9 @@ local generate_diff = function(opts)
       end
       return nil
     end
-    old_str = old_str:gsub("\n$", "") .. "\n"
+    if old_str ~= "" then
+      old_str = old_str:gsub("\n$", "") .. "\n"
+    end
     ensure_main_loop()
     if not vim.api.nvim_buf_is_valid(opts.file_bufnr) then
       return nil
@@ -253,6 +289,7 @@ end
 --- @field indices_hunks_unpacked IndicesHunkUnpacked[]
 --- @field unified_hunks string[]
 --- @field index_lines string[]
+--- @field is_untracked boolean
 
 --- @type table<number, DiffState>
 local buffer_state = {}
@@ -311,6 +348,11 @@ local update_state_for_buf = function(bufnr)
       return
     end
     local index_lines = vim.split(index_str:gsub("\n$", "") .. "\n", "\n", { trimempty = true })
+    local is_untracked = false
+    if #index_lines == 0 then
+      local untracked = vim.async.await(M.is_file_untracked(bufname)) --[[@as boolean?]]
+      is_untracked = untracked == true
+    end
 
     local indices_hunks_unpacked = {}
     for _, raw_hunk in ipairs(diff.indices) do
@@ -323,6 +365,7 @@ local update_state_for_buf = function(bufnr)
       indices_hunks_unpacked = indices_hunks_unpacked,
       unified_hunks = unified_hunks,
       index_lines = index_lines,
+      is_untracked = is_untracked,
     }
   end)
 end
@@ -473,6 +516,10 @@ end
 
 --- @param opts GetMatchingHunksOpts
 local function reset_hunks(opts)
+  if opts.state.is_untracked then
+    return notify(vim.log.levels.WARN, "Cannot reset hunks of an untracked file")
+  end
+
   local matching_hunks = get_matching_hunks(opts)
 
   for _, matching_hunk in ipairs(tbl_reverse(matching_hunks)) do
