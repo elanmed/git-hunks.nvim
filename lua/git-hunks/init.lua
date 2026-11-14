@@ -555,6 +555,10 @@ end
 
 --- @param opts GetMatchingHunksOpts
 local function reset_hunks(opts)
+  if opts.state.is_ignored then
+    return notify(vim.log.levels.WARN, "Cannot reset hunks of an ignored file")
+  end
+
   if opts.state.is_untracked then
     return notify(vim.log.levels.WARN, "Cannot reset hunks of an untracked file")
   end
