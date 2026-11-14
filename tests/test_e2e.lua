@@ -644,7 +644,10 @@ end
 T["untracked files"] = new_set()
 
 T["untracked files"]["diffs the whole buffer against an empty index entry"] = function()
-  mock_system_responses { ["git ls-files --cached -- test.txt"] = { stdout = "" } }
+  mock_system_responses {
+    ["git ls-files --cached -- test.txt"] = { stdout = "" },
+    ["git check-ignore -q -- test.txt"] = { code = 1 },
+  }
   capture_notifications()
   set_worktree_buffer("test.txt", { "line1", "line2" })
   trigger_diff_update()
@@ -663,7 +666,10 @@ T["untracked files"]["diffs the whole buffer against an empty index entry"] = fu
 end
 
 T["untracked files"]["ignores reset hunk"] = function()
-  mock_system_responses { ["git ls-files --cached -- test.txt"] = { stdout = "" } }
+  mock_system_responses {
+    ["git ls-files --cached -- test.txt"] = { stdout = "" },
+    ["git check-ignore -q -- test.txt"] = { code = 1 },
+  }
   capture_notifications()
   set_worktree_buffer("test.txt", { "line1", "line2" })
   trigger_diff_update()
@@ -682,7 +688,10 @@ T["untracked files"]["ignores reset hunk"] = function()
 end
 
 T["untracked files"]["ignores reset file"] = function()
-  mock_system_responses { ["git ls-files --cached -- test.txt"] = { stdout = "" } }
+  mock_system_responses {
+    ["git ls-files --cached -- test.txt"] = { stdout = "" },
+    ["git check-ignore -q -- test.txt"] = { code = 1 },
+  }
   capture_notifications()
   set_worktree_buffer("test.txt", { "line1", "line2" })
   trigger_diff_update()
@@ -739,6 +748,74 @@ T["untracked files"]["reports index listing errors and clears the state"] = func
   expect_state(function()
     return #child.api.nvim_buf_get_extmarks(bufnr, ns_id, 0, -1, {}) == 0
   end)
+end
+
+T["ignored files"] = new_set()
+
+T["ignored files"]["clears the signs once the file becomes ignored"] = function()
+  mock_system_responses {
+    ["git ls-files --cached -- test.txt"] = { stdout = "" },
+    ["git check-ignore -q -- test.txt"] = { code = 1 },
+  }
+  capture_notifications()
+  set_worktree_buffer("test.txt", { "line1", "line2" })
+  trigger_diff_update()
+
+  local bufnr = child.api.nvim_get_current_buf()
+  local ns_id = child.api.nvim_create_namespace "GitHunks"
+  expect_hunks(bufnr)
+  expect_sign(bufnr, 1, "DiffSignAdd")
+
+  mock_system_responses { ["git check-ignore -q -- test.txt"] = { code = 0 } }
+  trigger_diff_update()
+
+  expect_state(function()
+    return #child.api.nvim_buf_get_extmarks(bufnr, ns_id, 0, -1, {}) == 0
+  end)
+  eq(
+    child.lua_func(function()
+      return _G.notifications
+    end),
+    {}
+  )
+end
+
+T["ignored files"]["keeps the signs of tracked files that match an ignore pattern"] = function()
+  mock_system_responses {
+    ["git ls-files --cached -- test.txt"] = { stdout = "test.txt\n" },
+    ["git show :test.txt"] = { stdout = "line1\n" },
+    ["git check-ignore -q -- test.txt"] = { code = 0 },
+  }
+  set_worktree_buffer("test.txt", { "line1", "line2" })
+  trigger_diff_update()
+
+  local bufnr = child.api.nvim_get_current_buf()
+  expect_hunks(bufnr)
+  expect_sign(bufnr, 2, "DiffSignAdd")
+  eq(get_git_calls "git check-ignore", {})
+end
+
+T["ignored files"]["reports check-ignore failures and keeps the signs"] = function()
+  mock_system_responses {
+    ["git ls-files --cached -- test.txt"] = { stdout = "" },
+    ["git check-ignore -q -- test.txt"] = { code = 128, stderr = "fatal: bad revision\n" },
+  }
+  capture_notifications()
+  set_worktree_buffer("test.txt", { "line1" })
+  trigger_diff_update()
+
+  local bufnr = child.api.nvim_get_current_buf()
+  expect_hunks(bufnr)
+  expect_sign(bufnr, 1, "DiffSignAdd")
+  eq(
+    child.lua_func(function()
+      vim.wait(1000, function()
+        return #_G.notifications > 0
+      end)
+      return _G.notifications
+    end),
+    { { "[git-hunks.nvim]: fatal: bad revision", vim.log.levels.ERROR } }
+  )
 end
 
 T["unpack indices hunk"] = new_set()
