@@ -204,7 +204,8 @@ local get_git_root = function()
   return vim.async.run(
     --- @return string, string, integer
     function()
-      local stderr, stdout, code = vim.async.await(system { "git", "rev-parse", "--show-toplevel" }) --[[@as string, string, integer]]
+      --- @type string, string, integer
+      local stderr, stdout, code = vim.async.await(system { "git", "rev-parse", "--show-toplevel" }) --[[@as any]]
       --- @diagnostic disable-next-line: redundant-return-value
       return stderr, vim.trim(stdout), code
     end
@@ -252,7 +253,8 @@ M.read_index_file = function(rel_filename)
         return "", "", 0
       end
 
-      local stderr, stdout, code = vim.async.await(system { "git", "show", ":" .. rel_filename }) --[[@as string, string, integer]]
+      --- @type string, string, integer
+      local stderr, stdout, code = vim.async.await(system { "git", "show", ":" .. rel_filename }) --[[@as any]]
       --- @diagnostic disable-next-line: redundant-return-value
       return stderr, stdout, code
     end
@@ -293,7 +295,6 @@ end
 --- @field unified_hunks string[]
 --- @field index_lines string[]
 --- @field is_untracked boolean
---- @field is_ignored boolean
 
 --- @type table<number, DiffState>
 local buffer_state = {}
@@ -591,9 +592,10 @@ local stage_hunks = cb_async(function(opts)
     table.concat(matching_unified_hunks, "\n") .. "\n"
   )
 
+  --- @type string, string, integer
   local stderr, _, code = vim.async.await(
     system({ "git", "apply", "--cached", "--unidiff-zero", "-" }, { stdin = patch })
-  ) --[[@as string, string, integer]]
+  ) --[[@as any]]
   if code ~= 0 then
     return notify(vim.log.levels.ERROR, "Failed to stage hunk: %s", get_failure_msg(stderr))
   end
@@ -713,7 +715,7 @@ local setup_file_watcher = cb_async(function()
 
   --- @type string, string, integer
   local git_dir_stderr, git_dir, git_dir_code =
-    vim.async.await(system { "git", "rev-parse", "--absolute-git-dir" }) --[[@as string, string, integer]]
+    vim.async.await(system { "git", "rev-parse", "--absolute-git-dir" }) --[[@as any]]
   ensure_main_loop()
   if git_dir_code ~= 0 then
     file_watcher_setup_pending = false
