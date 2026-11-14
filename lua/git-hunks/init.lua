@@ -237,6 +237,26 @@ M.is_file_untracked = function(rel_filename)
 end
 
 --- @param rel_filename string
+--- @return vim.async.Task<boolean?>
+M.is_file_ignored = function(rel_filename)
+  return vim.async.run(
+    --- @return boolean?
+    function()
+      --- @type string, string, integer
+      local stderr, _, code =
+        vim.async.await(system { "git", "check-ignore", "-q", "--", rel_filename }) --[[@as any]]
+
+      if code ~= 0 and code ~= 1 then
+        notify(vim.log.levels.ERROR, "%s", get_failure_msg(stderr))
+        return nil
+      end
+
+      return code == 0
+    end
+  )
+end
+
+--- @param rel_filename string
 --- @return vim.async.Task<string, string, integer>
 M.read_index_file = function(rel_filename)
   return vim.async.run(
@@ -295,6 +315,7 @@ end
 --- @field unified_hunks string[]
 --- @field index_lines string[]
 --- @field is_untracked boolean
+--- @field is_ignored boolean
 
 --- @type table<number, DiffState>
 local buffer_state = {}
@@ -360,6 +381,12 @@ local update_state_for_buf = function(bufnr)
       is_untracked = untracked == true
     end
 
+    local is_ignored = false
+    if is_untracked then
+      local ignored = vim.async.await(M.is_file_ignored(bufname)) --[[@as boolean?]]
+      is_ignored = ignored == true
+    end
+
     local indices_hunks_unpacked = {}
     for _, raw_hunk in ipairs(diff.indices) do
       table.insert(indices_hunks_unpacked, M.unpack_indices_hunk(raw_hunk))
@@ -372,6 +399,7 @@ local update_state_for_buf = function(bufnr)
       unified_hunks = unified_hunks,
       index_lines = index_lines,
       is_untracked = is_untracked,
+      is_ignored = is_ignored,
     }
   end)
 end
@@ -381,6 +409,12 @@ local update_signs = function()
   local buf_state = buffer_state[curr_bufnr]
 
   if buf_state == nil then
+    return
+  end
+
+  vim.api.nvim_buf_clear_namespace(curr_bufnr, ns_id, 0, -1)
+
+  if buf_state.is_ignored then
     return
   end
 
@@ -412,7 +446,6 @@ local update_signs = function()
     end
   end
 
-  vim.api.nvim_buf_clear_namespace(curr_bufnr, ns_id, 0, -1)
   for _, row_to_hl in ipairs(rows_to_hl) do
     vim.api.nvim_buf_set_extmark(curr_bufnr, ns_id, row_to_hl.row_0i, 0, {
       number_hl_group = row_to_hl.hl,
