@@ -77,9 +77,10 @@ local function mock_read_index_file(content)
       local M_arg = M
       M_arg.read_index_file = function()
         return vim.async.run(
-          --- @return string?
+          --- @return string, string, integer
           function()
-            return content_arg
+            --- @diagnostic disable-next-line: redundant-return-value
+            return "", content_arg, 0
           end
         )
       end
@@ -97,10 +98,16 @@ local function mock_read_index_files(files)
       local M_arg = M
       --- @param rel_filename_arg string
       M_arg.read_index_file = function(rel_filename_arg)
+        local content = files_arg[rel_filename_arg]
         return vim.async.run(
-          --- @return string?
+          --- @return string, string, integer
           function()
-            return files_arg[rel_filename_arg]
+            if content == nil then
+              --- @diagnostic disable-next-line: redundant-return-value
+              return "", "", 1
+            end
+            --- @diagnostic disable-next-line: redundant-return-value
+            return "", content, 0
           end
         )
       end
@@ -564,7 +571,7 @@ T["stage hunk"]["reports Git errors when the patch cannot be applied"] = functio
   }
 
   eq(stage_hunk_and_capture_error(), {
-    "[git-hunks.nvim]: Failed to stage hunk: git apply --cached --unidiff-zero - failed. Error: error: patch does not apply",
+    "[git-hunks.nvim]: Failed to stage hunk: error: patch does not apply",
     true,
   })
 end
@@ -579,10 +586,7 @@ T["stage hunk"]["reports when it cannot find a Git root"] = function()
     ["git rev-parse --show-toplevel"] = { code = 128, stderr = "not a repository" },
   }
 
-  eq(
-    stage_hunk_and_capture_error(),
-    { "[git-hunks.nvim]: git rev-parse --show-toplevel failed. Error: not a repository", true }
-  )
+  eq(stage_hunk_and_capture_error(), { "[git-hunks.nvim]: not a repository", true })
 end
 
 T["stage hunk"]["reports when Git returns no error details"] = function()
@@ -596,7 +600,7 @@ T["stage hunk"]["reports when Git returns no error details"] = function()
   }
 
   eq(stage_hunk_and_capture_error(), {
-    "[git-hunks.nvim]: git rev-parse --show-toplevel failed. Error: unknown error",
+    "[git-hunks.nvim]: unknown error",
     true,
   })
 end
@@ -622,7 +626,7 @@ T["stage hunk"]["reports index read errors"] = function()
     return _G.system_notifications
   end)
   eq(notifications, {
-    { "[git-hunks.nvim]: git show :test.txt failed. Error: index unavailable", true },
+    { "[git-hunks.nvim]: index unavailable", true },
   })
 end
 
@@ -725,7 +729,7 @@ T["untracked files"]["reports index listing errors and clears the state"] = func
   end)
   eq(notifications, {
     {
-      "[git-hunks.nvim]: git ls-files --cached -- test.txt failed. Error: fatal: bad revision",
+      "[git-hunks.nvim]: fatal: bad revision",
       vim.log.levels.ERROR,
     },
   })
@@ -1067,12 +1071,16 @@ T["async state updates"]["ignores stale diff results after a newer update"] = fu
       if read_number == 1 or read_number == 4 then
         content = old_index_arg
       end
-      return vim.async.run(function()
-        if read_number == 1 then
-          vim.async.sleep(100)
+      return vim.async.run(
+        --- @return string, string, integer
+        function()
+          if read_number == 1 then
+            vim.async.sleep(100)
+          end
+          --- @diagnostic disable-next-line: redundant-return-value
+          return "", content, 0
         end
-        return content
-      end)
+      )
     end
   end, old_index, new_index)
   set_worktree_buffer("test.txt", { "new1", "working", "old3" })

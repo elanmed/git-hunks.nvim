@@ -179,40 +179,42 @@ end
 --- @type fun(cmd: string[], opts: vim.SystemOpts?): vim.SystemCompleted
 local system_async = vim.async.wrap(3, vim.system)
 
---- @type fun(cmd: string[], opts: vim.SystemOpts?): vim.async.Task<string?, string?>
+--- @type fun(cmd: string[], opts: vim.SystemOpts?): vim.async.Task<string, string, integer>
 local system = function(cmd, opts)
-  --- @return string?, string?
+  --- @return string, string, integer
   return vim.async.run(function()
     local out = system_async(cmd, opts)
-    if out.code ~= 0 then
-      local err = vim.trim(out.stderr)
-      if err == "" then
-        err = "unknown error"
-      end
-      --- @diagnostic disable-next-line: redundant-return-value
-      return nil, string.format("%s failed. Error: %s", table.concat(cmd, " "), err)
-    end
-
     --- @diagnostic disable-next-line: redundant-return-value
-    return out.stdout, nil
+    return out.stderr or "", out.stdout or "", out.code
   end)
 end
 
---- @return vim.async.Task<string?, string?>
+--- @param stderr string
+--- @return string
+local get_failure_msg = function(stderr)
+  local msg = vim.trim(stderr)
+  if msg == "" then
+    return "unknown error"
+  end
+  return msg
+end
+
+--- @return vim.async.Task<string, string, integer>
 local get_git_root = function()
   return vim.async.run(
-    --- @return string?, string?
+    --- @return string, string, integer
     function()
-      local git_root, err = vim.async.await(system { "git", "rev-parse", "--show-toplevel" }) --[[@as string?, string?]]
-      if git_root == nil then
-        --- @diagnostic disable-next-line: redundant-return-value
-        return nil, err
-      end
-
+      local stderr, stdout, code = vim.async.await(system { "git", "rev-parse", "--show-toplevel" }) --[[@as string, string, integer]]
       --- @diagnostic disable-next-line: redundant-return-value
-      return vim.trim(git_root), nil
+      return stderr, vim.trim(stdout), code
     end
   )
+end
+
+--- @param rel_filename string
+--- @return vim.async.Task<string, string, integer>
+local list_index_paths = function(rel_filename)
+  return system { "git", "ls-files", "--cached", "--", rel_filename }
 end
 
 --- @param rel_filename string
@@ -221,36 +223,38 @@ M.is_file_untracked = function(rel_filename)
   return vim.async.run(
     --- @return boolean?
     function()
-      local index_paths, index_paths_err =
-        vim.async.await(system { "git", "ls-files", "--cached", "--", rel_filename }) --[[@as string?, string?]]
-      if index_paths_err ~= nil then
-        notify(vim.log.levels.ERROR, "%s", index_paths_err)
+      --- @type string, string, integer
+      local stderr, stdout, code = vim.async.await(list_index_paths(rel_filename)) --[[@as any]]
+      if code ~= 0 then
+        notify(vim.log.levels.ERROR, "%s", get_failure_msg(stderr))
         return nil
       end
 
-      return index_paths == ""
+      return stdout == ""
     end
   )
 end
 
 --- @param rel_filename string
---- @return vim.async.Task<string?, string?>
+--- @return vim.async.Task<string, string, integer>
 M.read_index_file = function(rel_filename)
   return vim.async.run(
-    --- @return string?, string?
+    --- @return string, string, integer
     function()
-      local is_untracked = vim.async.await(M.is_file_untracked(rel_filename)) --[[@as boolean?]]
-      if is_untracked == nil then
+      --- @type string, string, integer
+      local paths_stderr, paths_stdout, paths_code = vim.async.await(list_index_paths(rel_filename)) --[[@as any]]
+      if paths_code ~= 0 then
         --- @diagnostic disable-next-line: redundant-return-value
-        return nil
+        return paths_stderr, "", paths_code
       end
-      if is_untracked then
+      if paths_stdout == "" then
         --- @diagnostic disable-next-line: redundant-return-value
-        return "", nil
+        return "", "", 0
       end
 
+      local stderr, stdout, code = vim.async.await(system { "git", "show", ":" .. rel_filename }) --[[@as string, string, integer]]
       --- @diagnostic disable-next-line: redundant-return-value
-      return vim.async.await(system { "git", "show", ":" .. rel_filename }) --[[@as string?, string?]]
+      return stderr, stdout, code
     end
   )
 end
@@ -263,11 +267,10 @@ end
 local generate_diff = function(opts)
   --- @return {indices: IndicesHunk[], unified: string}?
   return vim.async.run(function()
-    local old_str, err = vim.async.await(M.read_index_file(opts.rel_filename)) --[[@as string?, string?]]
-    if old_str == nil then
-      if err ~= nil then
-        notify(vim.log.levels.ERROR, "%s", err)
-      end
+    --- @type string, string, integer
+    local stderr, old_str, code = vim.async.await(M.read_index_file(opts.rel_filename)) --[[@as any]]
+    if code ~= 0 then
+      notify(vim.log.levels.ERROR, "%s", get_failure_msg(stderr))
       return nil
     end
     if old_str ~= "" then
@@ -290,6 +293,7 @@ end
 --- @field unified_hunks string[]
 --- @field index_lines string[]
 --- @field is_untracked boolean
+--- @field is_ignored boolean
 
 --- @type table<number, DiffState>
 local buffer_state = {}
@@ -339,11 +343,12 @@ local update_state_for_buf = function(bufnr)
       return
     end
 
-    local index_str = vim.async.await(M.read_index_file(bufname)) --[[@as string?]]
+    --- @type string, string, integer
+    local _, index_str, index_code = vim.async.await(M.read_index_file(bufname)) --[[@as any]]
     if buffer_update_id[bufnr] ~= update_id then
       return
     end
-    if index_str == nil then
+    if index_code ~= 0 then
       clear_state_for_buf(bufnr, update_id)
       return
     end
@@ -552,10 +557,11 @@ end
 --- @param opts GetMatchingHunksOpts
 local stage_hunks = cb_async(function(opts)
   local bufname = vim.api.nvim_buf_get_name(opts.curr_bufnr)
-  local git_root, git_root_err = vim.async.await(get_git_root()) --[[@as string?, string?]]
+  --- @type string, string, integer
+  local git_root_stderr, git_root, git_root_code = vim.async.await(get_git_root()) --[[@as any]]
   ensure_main_loop()
-  if git_root == nil then
-    return notify(vim.log.levels.ERROR, "%s", git_root_err or "Failed to get Git root")
+  if git_root_code ~= 0 then
+    return notify(vim.log.levels.ERROR, "%s", get_failure_msg(git_root_stderr))
   end
 
   local rel_filename = vim.fs.relpath(git_root, bufname)
@@ -585,11 +591,11 @@ local stage_hunks = cb_async(function(opts)
     table.concat(matching_unified_hunks, "\n") .. "\n"
   )
 
-  local out, err = vim.async.await(
+  local stderr, _, code = vim.async.await(
     system({ "git", "apply", "--cached", "--unidiff-zero", "-" }, { stdin = patch })
-  ) --[[@as string?, string?]]
-  if out == nil then
-    return notify(vim.log.levels.ERROR, "Failed to stage hunk: %s", err or "unknown error")
+  ) --[[@as string, string, integer]]
+  if code ~= 0 then
+    return notify(vim.log.levels.ERROR, "Failed to stage hunk: %s", get_failure_msg(stderr))
   end
 
   ensure_main_loop()
@@ -705,14 +711,13 @@ local setup_file_watcher = cb_async(function()
   end
   file_watcher_setup_pending = true
 
-  local git_dir, git_dir_err = vim.async.await(system { "git", "rev-parse", "--absolute-git-dir" }) --[[@as string?, string?]]
+  --- @type string, string, integer
+  local git_dir_stderr, git_dir, git_dir_code =
+    vim.async.await(system { "git", "rev-parse", "--absolute-git-dir" }) --[[@as string, string, integer]]
   ensure_main_loop()
-  if git_dir == nil then
+  if git_dir_code ~= 0 then
     file_watcher_setup_pending = false
-    if git_dir_err ~= nil then
-      return notify(vim.log.levels.ERROR, "%s", git_dir_err)
-    end
-    return
+    return notify(vim.log.levels.ERROR, "%s", get_failure_msg(git_dir_stderr))
   end
   local git_dir_path = vim.trim(git_dir)
 
